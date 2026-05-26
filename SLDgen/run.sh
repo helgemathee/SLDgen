@@ -1,0 +1,4 @@
+python run.py --target ../data/letters/D.png --caption "a cursive style handwritten letter D" --output-dir ../output/ --condition canny --n-control-points 193 --calligraphy --experiment-name 12_calli-free 
+python run.py --target ../data/letters/D.png --caption "a cursive style handwritten letter D" --output-dir ../output/ --condition canny --n-control-points 193 --calligraphy --experiment-name 12_calli-free-width  --width optim
+python run.py --target ../data/letters/D.png --caption "a cursive style handwritten letter D" --output-dir ../output/ --condition canny --n-control-points 193 --calligraphy --experiment-name 12_calli-fixed --fixed-endpoints
+python run.py --target ../data/letters/D.png --caption "a cursive style handwritten letter D" --output-dir ../output/ --condition canny --n-control-points 193 --calligraphy --experiment-name 12_calli-fixed-width  --width optim --fixed-endpoints
