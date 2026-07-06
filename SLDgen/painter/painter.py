@@ -71,6 +71,14 @@ class SLDBSplinePainter(torch.nn.Module):
             weights = torch.cat([self.first2weights, weights, self.last2weights], dim=0)
             width = torch.cat([self.first2widths, width, self.last2widths], dim=0)
 
+        if getattr(self.args, "origin", None) is not None:
+            # Prepend the pinned origin (3 coincident copies) each forward pass so
+            # the clamped B-spline starts exactly at the origin. Only the start is
+            # pinned; no endpoint tensor is appended.
+            control_points = torch.cat([self.first_origin_points, control_points], dim=0)
+            weights = torch.cat([self.first_origin_weights, weights], dim=0)
+            width = torch.cat([self.first_origin_widths, width], dim=0)
+
         # Compute the basis spline for the control points
         basis_spline = getAllBSplineBasis(len(control_points), n_sample=self.args.sampling_rate)
         basis_spline = basis_spline.to(self.device)
@@ -192,6 +200,30 @@ class SLDBSplinePainter(torch.nn.Module):
             ) * (self.args.width if self.args.width != "optim" else 1.0)
             control_points = (
                 torch.tensor(control_points[2:-2], dtype=torch.float32).contiguous().to(self.device)
+            )
+        elif getattr(self.args, "origin", None) is not None:
+            # Pin control_points[0] (rotated to the front during TSP init) as the
+            # curve's start. Triple it so the uniform cubic B-spline is clamped and
+            # the rendered curve begins exactly at the origin (see get_polyline_2d).
+            # These tensors are kept out of parameters(), so the optimizer never
+            # moves the origin.
+            self.first_origin_points = (
+                torch.tensor(
+                    np.array([control_points[0], control_points[0], control_points[0]]),
+                    dtype=torch.float32,
+                )
+                .contiguous()
+                .to(self.device)
+            )
+            self.first_origin_weights = torch.ones(
+                len(self.first_origin_points), dtype=torch.float32
+            ).to(self.device)
+            self.first_origin_widths = torch.ones(
+                len(self.first_origin_points), dtype=torch.float32
+            ).to(self.device) * (self.args.width if self.args.width != "optim" else 1.0)
+            # Everything after the origin remains optimizable.
+            control_points = (
+                torch.tensor(control_points[1:], dtype=torch.float32).contiguous().to(self.device)
             )
         else:
             control_points = (

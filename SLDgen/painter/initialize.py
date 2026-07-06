@@ -44,6 +44,7 @@ def initialize_control_points(args, mask=None):
             output_dir=args.output_dir,
             debug=args.debug,
             fixed_endpoints=args.fixed_endpoints,
+            origin=getattr(args, "origin", None),
         )
     else:
         raise NotImplementedError(f"Initialization method {args.init_method} not implemented.")
@@ -116,7 +117,7 @@ def reorder_polyline(polyline):
     return ordered_polyline
 
 
-def initialize_from_tsp(n_control_points, mask, output_dir, debug, fixed_endpoints):
+def initialize_from_tsp(n_control_points, mask, output_dir, debug, fixed_endpoints, origin=None):
     # Create initial ordered points using the TSP-based initializer
     control_points = init_tsp_art(
         mask.numpy(),
@@ -126,9 +127,12 @@ def initialize_from_tsp(n_control_points, mask, output_dir, debug, fixed_endpoin
         output_dir=str(Path(output_dir) / "tsp_init"),
         debug=debug,
         fixed_endpoints=fixed_endpoints,
+        origin=origin,
     )
-    # Reorder so the polyline starts at the longest segment and convert to array
-    if not fixed_endpoints:
+    # Reorder so the polyline starts at the longest segment and convert to array.
+    # When an origin is pinned, init_tsp_art has already rotated the tour so the
+    # origin is index 0, so the longest-segment heuristic must NOT run here.
+    if not fixed_endpoints and origin is None:
         control_points = reorder_polyline(control_points)
     control_points = np.array(control_points)
 

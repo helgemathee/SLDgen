@@ -154,6 +154,11 @@ def run(args):
     renderer.canvas_height *= 2
     renderer.control_points = renderer.control_points * 2
     renderer.width = renderer.width * 2
+    if getattr(args, "origin", None) is not None:
+        # Keep the pinned origin (and its widths) consistent with the doubled
+        # control points for the final double-resolution export.
+        renderer.first_origin_points = renderer.first_origin_points * 2
+        renderer.first_origin_widths = renderer.first_origin_widths * 2
     raster_sld = renderer.get_image().permute(0, 2, 3, 1).detach().cpu().numpy()[0]
     raster_sld = Image.fromarray((raster_sld * 255).astype(np.uint8))
     raster_sld.save(f"{args.output_dir}/final_sld.png")

@@ -186,6 +186,22 @@ def parse_arguments(custom_args=None):
         help="Keep the endpoints fixed during optimization for easy drawing connection.",
     )
 
+    parser.add_argument(
+        "--origin",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("X", "Y"),
+        help=(
+            "Optional. Pin the start of the curve (control_points[0]) to this "
+            "normalized location, given as two floats in [0, 1]: X is the fraction "
+            "from the left, Y the fraction from the top. The pinned point is excluded "
+            "from optimization so gradient descent cannot move it. If omitted, "
+            "behavior is identical to upstream. Only valid with --init-method tsp, "
+            "and mutually exclusive with --fixed-endpoints."
+        ),
+    )
+
     # SDS loss parameters
     parser.add_argument("--caption", type=str, default="")
     parser.add_argument("--conditioning-scale", type=float, default=0.5)
@@ -245,6 +261,16 @@ def parse_arguments(custom_args=None):
 
     # Parse arguments
     args = parser.parse_args(custom_args)
+
+    # Validate the opt-in --origin feature. Default (None) keeps behavior unchanged.
+    if args.origin is not None:
+        if args.fixed_endpoints:
+            parser.error("--origin and --fixed-endpoints are mutually exclusive.")
+        if args.init_method != "tsp":
+            parser.error("--origin is only supported with --init-method tsp.")
+        x, y = args.origin
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            parser.error(f"--origin values must be in [0, 1]; got {args.origin}.")
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"

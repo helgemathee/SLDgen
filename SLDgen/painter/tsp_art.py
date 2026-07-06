@@ -83,6 +83,7 @@ def init_tsp_art(
     output_dir=None,
     debug=False,
     fixed_endpoints=False,
+    origin=None,
 ):
     """Initialize TSP art by stippling, generating a TSP problem, and solving it with Concorde."""
     if output_dir is None:
@@ -118,6 +119,21 @@ def init_tsp_art(
             [dumb_node, extrem_left, extrem_right, mid_left, mid_right, points], axis=0
         )
 
+    # Inject the pinned origin as an extra node so Concorde is forced to route
+    # through it; the tour is later rotated so this node becomes index 0.
+    origin_index = None
+    if origin is not None:
+        # Mirror stipple()'s zoom (see stippler.py) so the origin lands in the same
+        # (zoomed) pixel space as the points that stipple() returns.
+        zoom = (n_point * 500) / (density.shape[0] * density.shape[1])
+        zoom = max(int(round(np.sqrt(zoom))), 1)
+        points = np.array(points)
+        origin_index = len(points)
+        origin_px = np.array(
+            [[origin[0] * density.shape[1] * zoom, origin[1] * density.shape[0] * zoom]]
+        )
+        points = np.concatenate([points, origin_px], axis=0)
+
     # Save the points to a TSP file
     with open(root_tmp_dir / "point.tsp", "w") as f:
         f.write(get_tsp_file_string(points, fixed_endpoints=fixed_endpoints))
@@ -141,6 +157,11 @@ def init_tsp_art(
     if fixed_endpoints:
         index_of_0 = order.index(0)
         order = np.roll(order, -index_of_0 - 1, axis=0)[:-1]
+    elif origin is not None:
+        # Rotate the closed tour so the injected origin node becomes index 0.
+        # Because the curve is rendered open, index 0 becomes the start endpoint.
+        index_of_origin = order.index(origin_index)
+        order = np.roll(order, -index_of_origin, axis=0)
     ordered_points = points[order]
 
     # Clean up temporary directory
