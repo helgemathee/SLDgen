@@ -192,6 +192,49 @@ def main():
          "--partitions", "2", "--strategy", "sequence"],
         "reject-missing-input")
 
+    # 11. labelmap discrete: a PNG of N flat gray regions assigns every point to
+    #     its region exactly (bijection value -> label, dark-to-light).
+    from PIL import Image
+    lab = np.zeros((512, 512), np.uint8)
+    lab[:170] = 50
+    lab[170:341] = 150
+    lab[341:] = 250
+    paint = os.path.join(SCRATCH, "paint3.png")
+    Image.fromarray(lab).save(paint)
+    lm = sp.assign_labelmap(pts, 3, paint, w, h)
+    sampled = lab[np.clip(np.round(pts[:, 1]).astype(int), 0, 511),
+                  np.clip(np.round(pts[:, 0]).astype(int), 0, 511)]
+    bijection = (set(lm[sampled == 50]) == {0}
+                 and set(lm[sampled == 150]) == {1}
+                 and set(lm[sampled == 250]) == {2})
+    ok &= check("labelmap-discrete-exact", bijection)
+
+    # 12. labelmap continuous: a smooth vertical gradient is quantile-binned into
+    #     N equal-count groups (NOT collapsed to discrete), balanced within +-15%.
+    grad = np.tile(np.linspace(0, 255, 512, dtype=np.uint8), (512, 1))  # x-gradient
+    gradpng = os.path.join(SCRATCH, "grad.png")
+    Image.fromarray(grad).save(gradpng)
+    lg = sp.assign_labelmap(pts, 3, gradpng, w, h)
+    counts = np.bincount(lg, minlength=3)
+    balanced = counts.min() >= 0.85 * counts.mean() and len(set(lg.tolist())) == 3
+    ok &= check("labelmap-continuous-quantile", balanced)
+
+    # 13. labelmap continuous with a flat background + gradient must still quantile
+    #     (the chained-ramp-vs-flat-region discriminator): a huge black margin plus
+    #     a gradient subject should not be mistaken for 2 discrete regions.
+    bg = np.zeros((512, 512), np.uint8)
+    bg[100:400, 100:400] = np.tile(np.linspace(20, 255, 300, dtype=np.uint8), (300, 1))
+    bgpng = os.path.join(SCRATCH, "bg_grad.png")
+    Image.fromarray(bg).save(bgpng)
+    lb = sp.assign_labelmap(pts, 3, bgpng, w, h)
+    ok &= check("labelmap-bg-ramp-not-discrete", len(set(lb.tolist())) == 3)
+
+    # 14. labelmap requires --labels; missing it fails fast.
+    ok &= expect_exit(
+        ["--input", master, "--output-dir", SCRATCH, "--partitions", "3",
+         "--strategy", "labelmap"],
+        "reject-labelmap-without-labels")
+
     print("\nRESULT:", "ALL PASS" if ok else "FAILURE")
     sys.exit(0 if ok else 1)
 

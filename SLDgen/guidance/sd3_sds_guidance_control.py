@@ -152,6 +152,22 @@ class SD3GuidanceControl(nn.Module):
         condition = create_condition(self.args.input_image, condition_name)
         condition = self.create_masked_condition(condition)
         condition.save(f"{self.args.output_dir}/{condition_name}_condition.png")
+
+        # Persist the conditioning image under a stable, documented name for reuse
+        # as a partition label map (sld_partition.py --strategy labelmap). It is in
+        # CANVAS SPACE at --render-size: create_condition runs on args.input_image,
+        # which targets.py sets AFTER the --object-size-ratio rescale-and-center and
+        # the resize to render_size (see targets.py: rescale_obj -> args.input_image),
+        # and create_masked_condition re-applies args.mask (same canvas-space mask
+        # used for TSP init) and resizes to render_size. It is therefore pixel-aligned
+        # with the exported master SVG, so a partition script can sample it at each
+        # master point's coordinates with no transform.
+        condition.save(f"{self.args.output_dir}/condition_{condition_name}.png")
+        print(
+            f"\t\tSaved conditioning image -> condition_{condition_name}.png "
+            f"(canvas space at {self.args.render_size}px, aligned with the master SVG).",
+            flush=True,
+        )
         # Prepare the image in the format expected by the pipeline.
         final_condition = self.pipe.prepare_image(
             image=condition,

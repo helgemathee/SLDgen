@@ -26,8 +26,15 @@ Strategies (``--strategy``)
     cluster     k-means the control points into N spatial groups, then order
                 each group by nearest-neighbour traversal. Good for subjects
                 with N natural blobs that don't fall on a clean axis.
+    labelmap    Split *semantically* by sampling a label PNG (``--labels``)
+                under each master point. A continuous map (e.g. SLDgen's
+                condition_depth.png) is quantile-binned into N depth layers
+                (foreground / midground / background); a PNG with <= N flat
+                gray regions is partitioned directly by region (hand-painted
+                masks). Requires the label PNG to be in the master's canvas
+                space -- SLDgen's saved condition image already is.
 
-For horizontal / vertical / radial the points of a partition come from
+For horizontal / vertical / radial / labelmap the points of a partition come from
 possibly non-contiguous segments of the master (the curve crosses a boundary
 back and forth). Those strategies keep the master's original ordering and
 simply break the kept points into separate sub-strokes wherever the master
@@ -195,6 +202,76 @@ def assign_sequence(m, n):
     idx = np.arange(m)
     labels = (idx * n) // m
     return np.clip(labels, 0, n - 1)
+
+
+def assign_labelmap(points, n, labels_path, canvas_w, canvas_h, discrete_tol=6.0):
+    """Assign points *semantically* by sampling a label PNG under each point.
+
+    The master's points live in canvas coordinates aligned with the conditioned
+    image, so partition assignment is a label lookup. Loads the label image as
+    grayscale, samples the pixel under each master point (nearest-neighbour),
+    then partitions in one of two modes:
+
+    * **Discrete** (hand-painted regions / segmentation): if the sampled values
+      form ``<= n`` distinct FLAT levels -- values grouped within ``discrete_tol``
+      gray levels to absorb light anti-aliasing, each group spanning only a few
+      levels -- the levels ARE the labels. Points are assigned by region, ordered
+      dark-to-light. Any PNG with up to ``n`` flat regions works directly.
+    * **Continuous** (depth): quantile binning -- points are sorted by sampled
+      value and split into ``n`` equal-count groups. Real depth maps cluster, so
+      equal-count quantiles stay balanced where equal-WIDTH bins would leave some
+      near-empty; this also degrades gracefully as the value spread shrinks.
+
+    Discrete vs continuous is decided by whether the value groups are *flat*: a
+    hand-painted region is a tight cluster (small internal span), whereas a depth
+    ramp chains through ``discrete_tol``-sized steps into one group that spans a
+    wide range -- so a wide-span group forces the continuous path even though it
+    is a single chained group. This is why a background-plus-gradient depth map
+    (two chained groups) is still quantile-binned, not treated as 2 regions.
+
+    The label PNG is assumed to share the master's canvas space; if its pixel
+    dimensions differ (e.g. a 2x export) the sample coordinates are scaled to it.
+
+    Returns an int label array in ``[0, n-1]``, one per master point.
+    """
+    from PIL import Image
+
+    img = np.asarray(Image.open(labels_path).convert("L"), dtype=np.float64)  # (H, W)
+    h_px, w_px = img.shape
+    # Map master canvas coordinates -> label-image pixels (identity when sizes match).
+    sx = (w_px - 1) / max(canvas_w - 1, 1e-9)
+    sy = (h_px - 1) / max(canvas_h - 1, 1e-9)
+    xi = np.clip(np.round(points[:, 0] * sx).astype(int), 0, w_px - 1)
+    yi = np.clip(np.round(points[:, 1] * sy).astype(int), 0, h_px - 1)
+    vals = img[yi, xi]  # (M,) sampled gray value per master point
+
+    # Group sorted values into levels separated by more than discrete_tol.
+    order = np.argsort(vals, kind="stable")
+    sv = vals[order]
+    breaks = np.diff(sv) > discrete_tol
+    group_sorted = np.concatenate([[0], np.cumsum(breaks)]) if len(sv) else np.array([], int)
+    num_levels = int(group_sorted[-1]) + 1 if len(sv) else 0
+
+    # A group is "flat" (a real painted region) only if its internal value span is
+    # small; a chained depth ramp forms few groups but each spans a wide range.
+    max_level_span = 3.0 * discrete_tol
+    groups_flat = all(
+        (seg.max() - seg.min()) <= max_level_span
+        for seg in (sv[group_sorted == g] for g in range(num_levels))
+    )
+
+    if num_levels <= n and groups_flat:
+        # Discrete map: the flat levels are the labels (0 = darkest region).
+        labels = np.empty(len(vals), dtype=int)
+        labels[order] = group_sorted
+        return labels
+
+    # Continuous map: quantile binning into n equal-count groups (0 = lowest values).
+    labels = np.empty(len(vals), dtype=int)
+    edges = np.linspace(0, len(vals), n + 1).astype(int)
+    for i in range(n):
+        labels[order[edges[i]:edges[i + 1]]] = i
+    return labels
 
 
 def runs_from_labels(points, labels, i):
@@ -429,6 +506,8 @@ def parse_args(argv=None):
             "  radial      pie slices by angle about the canvas centre\n"
             "  sequence    contiguous thirds of the master's traversal\n"
             "  cluster     k-means groups, nearest-neighbour ordered\n"
+            "  labelmap    semantic split by a --labels PNG (depth quantiles\n"
+            "              or flat painted regions)\n"
         ),
     )
     parser.add_argument(
@@ -448,8 +527,21 @@ def parse_args(argv=None):
     parser.add_argument(
         "--strategy",
         required=True,
-        choices=["horizontal", "vertical", "radial", "sequence", "cluster"],
+        choices=["horizontal", "vertical", "radial", "sequence", "cluster", "labelmap"],
         help="how to partition the master (see epilog)",
+    )
+    parser.add_argument(
+        "--labels",
+        type=str,
+        default=None,
+        metavar="PNG",
+        help=(
+            "label map PNG for --strategy labelmap (required for it, ignored "
+            "otherwise). A continuous map (e.g. SLDgen's condition_depth.png) is "
+            "quantile-binned into N depth layers; a map with <= N flat gray "
+            "regions is partitioned directly by region. Must be in the master's "
+            "canvas space."
+        ),
     )
     parser.add_argument(
         "--origins",
@@ -493,6 +585,12 @@ def validate_args(args):
     if args.sample_spacing <= 0:
         _die("--sample-spacing must be > 0")
 
+    if args.strategy == "labelmap":
+        if args.labels is None:
+            _die("--strategy labelmap requires --labels <PNG>")
+        if not os.path.isfile(args.labels):
+            _die(f"--labels PNG does not exist: {args.labels}")
+
     origins_norm = None
     if args.origins is not None:
         if len(args.origins) != 2 * args.partitions:
@@ -526,6 +624,9 @@ def main(argv=None):
         partitions = cluster_partitions(points, n, origins_px, seed=args.seed)
     elif args.strategy == "sequence":
         labels = assign_sequence(m, n)
+        partitions = [runs_from_labels(points, labels, i) for i in range(n)]
+    elif args.strategy == "labelmap":
+        labels = assign_labelmap(points, n, args.labels, canvas_w, canvas_h)
         partitions = [runs_from_labels(points, labels, i) for i in range(n)]
     else:  # horizontal / vertical / radial
         labels = assign_banded(points, n, canvas_w, canvas_h, args.strategy)
