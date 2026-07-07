@@ -46,6 +46,7 @@ def initialize_control_points(args, mask=None):
             fixed_endpoints=args.fixed_endpoints,
             origin=getattr(args, "origin", None),
             init_points=getattr(args, "init_points", None),
+            verbose=getattr(args, "verbose", False),
         )
     else:
         raise NotImplementedError(f"Initialization method {args.init_method} not implemented.")
@@ -119,7 +120,8 @@ def reorder_polyline(polyline):
 
 
 def initialize_from_tsp(
-    n_control_points, mask, output_dir, debug, fixed_endpoints, origin=None, init_points=None
+    n_control_points, mask, output_dir, debug, fixed_endpoints, origin=None, init_points=None,
+    verbose=False,
 ):
     # Create initial ordered points using the TSP-based initializer
     control_points = init_tsp_art(
@@ -142,5 +144,17 @@ def initialize_from_tsp(
 
     control_points[:, 0] = control_points[:, 0] / mask.shape[1]
     control_points[:, 1] = control_points[:, 1] / mask.shape[0]
+
+    if verbose:
+        # Coordinate-stat instrumentation: init points should span the subject
+        # region within the [0, 1] normalized canvas. Values well outside [0, 1]
+        # (or a mean far from the subject centroid) signal an init offset/scale bug.
+        print(
+            f"\tinit points (normalized): "
+            f"x[{control_points[:, 0].min():.3f}, {control_points[:, 0].max():.3f}] "
+            f"y[{control_points[:, 1].min():.3f}, {control_points[:, 1].max():.3f}] "
+            f"mean=({control_points[:, 0].mean():.3f}, {control_points[:, 1].mean():.3f})",
+            flush=True,
+        )
 
     return control_points

@@ -210,7 +210,18 @@ def init_tsp_art(
         # Because the curve is rendered open, index 0 becomes the start endpoint.
         index_of_origin = order.index(origin_index)
         order = np.roll(order, -index_of_origin, axis=0)
-    ordered_points = points[order]
+    ordered_points = np.asarray(points[order], dtype=float)
+
+    # stipple() (and the origin / init-points injectors, which deliberately mirror
+    # it) work in a zoomed pixel space of ~500 px per Voronoi region: coordinates
+    # span [0, shape*zoom], not [0, shape]. Scale back to the original (un-zoomed)
+    # pixel frame so callers can normalize by density.shape alone. At zoom == 1
+    # (which holds for the default point count) this is a no-op, so the default
+    # behavior is byte-identical; it only corrects the overflow at higher point
+    # counts, where zoom >= 2 previously pushed the curve off the bottom-right.
+    zoom = _zoom_factor(density, n_point)
+    if zoom != 1:
+        ordered_points = ordered_points / zoom
 
     # Clean up temporary directory
     if output_dir is None:
