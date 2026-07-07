@@ -225,6 +225,45 @@ def parse_arguments(custom_args=None):
         help="Scale for the LoRA model, if 0, no LoRA is used",
     )
 
+    # Avoidance constraint (opt-in). When --avoid is unset, behavior is identical
+    # to upstream: no avoid points are loaded and the avoidance loss is skipped.
+    parser.add_argument(
+        "--avoid",
+        type=str,
+        nargs="+",
+        default=None,
+        metavar="SVG",
+        help=(
+            "Optional. One or more SVG files whose paths the newly-generated curve "
+            "should avoid (be repelled from). Points are sampled along every path "
+            "in each SVG and treated as fixed obstacles during optimization. The "
+            "SVGs are assumed to be in canvas pixel coordinates at --render-size "
+            "(a warning is printed if their viewBox/size differs). Enables "
+            "sequential compositional workflows where each new line respects "
+            "previously-generated lines. Composes with --origin and "
+            "--fixed-endpoints. If omitted, behavior is identical to upstream."
+        ),
+    )
+    parser.add_argument(
+        "--avoidance-weight",
+        type=float,
+        default=0.004,
+        help=(
+            "Strength of the avoidance repulsion (mirrors --repulsion-loss-weight). "
+            "Only used when --avoid is set."
+        ),
+    )
+    parser.add_argument(
+        "--avoidance-distance",
+        type=float,
+        default=25.0,
+        help=(
+            "Distance threshold in canvas pixel units below which the avoidance "
+            "repulsion acts (mirrors the d0=25 of the intra-curve repulsion loss). "
+            "Only used when --avoid is set."
+        ),
+    )
+
     # Other losses
     parser.add_argument(
         "--repulsion-loss-weight", type=float, default=0.004, help="Weight for the repulsion loss."
@@ -271,6 +310,12 @@ def parse_arguments(custom_args=None):
         x, y = args.origin
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
             parser.error(f"--origin values must be in [0, 1]; got {args.origin}.")
+
+    # Validate the opt-in --avoid feature. Default (None) keeps behavior unchanged.
+    if args.avoid is not None:
+        for svg_path in args.avoid:
+            if not Path(svg_path).exists():
+                parser.error(f"--avoid SVG file does not exist: {svg_path}")
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"
