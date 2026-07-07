@@ -235,6 +235,28 @@ def main():
          "--strategy", "labelmap"],
         "reject-labelmap-without-labels")
 
+    # 15. --preview with labelmap writes partition_preview.png AND a byte-exact
+    #     copy of the label image (self-documenting output dir).
+    out = os.path.join(SCRATCH, "preview")
+    run(["--input", master, "--output-dir", out, "--partitions", "3",
+         "--strategy", "labelmap", "--labels", paint, "--preview"])
+    preview_png = os.path.join(out, "partition_preview.png")
+    copied = os.path.join(out, os.path.basename(paint))
+    prev_ok = os.path.isfile(preview_png) and os.path.getsize(preview_png) > 0
+    prev_ok &= (os.path.isfile(copied)
+                and open(copied, "rb").read() == open(paint, "rb").read())
+    ok &= check("preview-and-label-copy", prev_ok)
+
+    # 16. --preview for a geometric strategy (no --labels) still emits the PNG
+    #     (blank backdrop) and copies nothing.
+    out = os.path.join(SCRATCH, "preview_blank")
+    run(["--input", master, "--output-dir", out, "--partitions", "3",
+         "--strategy", "horizontal", "--preview"])
+    blank_ok = os.path.isfile(os.path.join(out, "partition_preview.png"))
+    blank_ok &= not any(f.endswith(".png") and f != "partition_preview.png"
+                        for f in os.listdir(out))
+    ok &= check("preview-blank-no-copy", blank_ok)
+
     print("\nRESULT:", "ALL PASS" if ok else "FAILURE")
     sys.exit(0 if ok else 1)
 

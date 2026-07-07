@@ -49,6 +49,15 @@ Origins & tails (optional)
     the anchor at the end (or, with no origins, tails to the nearest canvas
     edge at both ends). Tails give each plotted piece a clean lead-in/lead-out.
 
+Preview (optional)
+    ``--preview`` writes a ``partition_preview.png`` into ``--output-dir``: every
+    partition's points scattered in a distinct colour over the label/depth image
+    used for the split (or a blank canvas for the geometric strategies). It is a
+    quick visual sanity check of where each piece landed. When a ``--labels`` PNG
+    was used, a copy of it is also dropped into ``--output-dir`` so the folder is
+    self-documenting. Needs matplotlib (part of SLDgen's env); if it is missing
+    the preview is skipped with a warning and the SVGs are still written.
+
 The tool only reads SLDgen-style output: a single ``<path>`` whose ``d`` is one
 ``M`` followed by ``L`` segments. It writes ``partition_<i>.svg`` for i in
 ``0..N-1`` into ``--output-dir`` (always exactly N files; empty partitions are
@@ -436,6 +445,80 @@ def apply_tails(runs, origin_px, connect_tails, canvas_w, canvas_h):
 
 
 # --------------------------------------------------------------------------- #
+# Preview (optional matplotlib overlay of the partitioning)
+# --------------------------------------------------------------------------- #
+def _partition_colors(n):
+    """N visually distinct hex colours: a hand palette first, then HSV fallback."""
+    palette = [
+        "#e63946", "#2a9d8f", "#f4a261", "#457b9d", "#e9c46a",
+        "#8d5b9e", "#bc6c25", "#606c38", "#d62828", "#118ab2",
+    ]
+    if n <= len(palette):
+        return palette[:n]
+    import colorsys
+
+    return [
+        "#%02x%02x%02x"
+        % tuple(int(255 * c) for c in colorsys.hsv_to_rgb(i / n, 0.65, 0.9))
+        for i in range(n)
+    ]
+
+
+def write_preview(out_path, partitions_runs, bg_path, canvas_w, canvas_h):
+    """Scatter each partition's points in its own colour over the label image.
+
+    ``partitions_runs`` is the per-partition list of sub-strokes actually written
+    (post-tails), so the preview matches the SVGs exactly. ``bg_path`` is the
+    label/depth PNG used for the split (drawn as a grayscale backdrop, stretched
+    into the master's canvas space so points register) or ``None`` for a blank
+    canvas. Returns the written path, or ``None`` if matplotlib is unavailable.
+    """
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")  # headless: no display needed
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print(
+            "warning: --preview needs matplotlib but it is not importable; "
+            "skipping partition_preview.png",
+            file=sys.stderr,
+        )
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    if bg_path is not None:
+        from PIL import Image
+
+        bg = np.asarray(Image.open(bg_path).convert("L"))
+        # extent maps the image into canvas space so overlaid points line up even
+        # if the label PNG was exported at a different pixel resolution.
+        ax.imshow(
+            bg, cmap="gray", extent=[0, canvas_w, canvas_h, 0], aspect="auto"
+        )
+    else:
+        ax.set_facecolor("white")
+    ax.set_xlim(0, canvas_w)
+    ax.set_ylim(canvas_h, 0)  # SVG y grows downward
+
+    colors = _partition_colors(len(partitions_runs))
+    for i, runs in enumerate(partitions_runs):
+        stroked = [np.asarray(r) for r in runs if len(r)]
+        if not stroked:
+            continue
+        pts = np.vstack(stroked)
+        ax.scatter(
+            pts[:, 0], pts[:, 1], s=2, c=colors[i], label=f"partition_{i}"
+        )
+    ax.legend(loc="lower right", fontsize=8, markerscale=3)
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+# --------------------------------------------------------------------------- #
 # SVG writing
 # --------------------------------------------------------------------------- #
 DEFAULT_STYLE = {
@@ -576,6 +659,16 @@ def parse_args(argv=None):
         default=0,
         help="random seed for the cluster strategy's k-means (default 0)",
     )
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help=(
+            "also write partition_preview.png: each partition's points scattered "
+            "in a distinct colour over the --labels image (or a blank canvas). "
+            "When --labels is used, a copy of it is saved to --output-dir too. "
+            "Requires matplotlib."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -643,6 +736,7 @@ def main(argv=None):
     )
 
     written = []
+    written_runs = []
     warnings = []
     for i in range(n):
         origin_i = origins_px[i] if origins_px is not None else None
@@ -665,6 +759,7 @@ def main(argv=None):
             out_path, runs, style, canvas_w, canvas_h, empty_note
         )
         written.append((out_path, n_pts, n_strokes))
+        written_runs.append(runs)
 
     # --- Report body ---
     print("\npartitions written:")
@@ -679,6 +774,29 @@ def main(argv=None):
         print(f"    {out_path}")
 
     print(f"\n{n} files written to {args.output_dir} (~{m // n} points each).")
+
+    # --- Optional preview + self-documenting copy of the label image ---
+    if args.preview:
+        preview_bg = None
+        if args.labels is not None:
+            import shutil
+
+            dst = os.path.join(args.output_dir, os.path.basename(args.labels))
+            if os.path.abspath(dst) != os.path.abspath(args.labels):
+                shutil.copy2(args.labels, dst)
+                print(f"copied label image -> {dst}")
+            preview_bg = dst if os.path.isfile(dst) else args.labels
+
+        preview_path = write_preview(
+            os.path.join(args.output_dir, "partition_preview.png"),
+            written_runs,
+            preview_bg,
+            canvas_w,
+            canvas_h,
+        )
+        if preview_path:
+            print(f"preview -> {preview_path}")
+
     if warnings:
         print("warnings:")
         for w in warnings:
