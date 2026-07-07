@@ -6,6 +6,7 @@ import pydiffvg
 import svgwrite
 import torch
 
+from ..avoidance import load_avoid_points
 from .initialize import initialize_control_points
 
 
@@ -250,7 +251,40 @@ class SLDBSplinePainter(torch.nn.Module):
         )
         self.shape_groups = [path_group]
 
+        # Load the opt-in avoidance obstacle points (canvas pixel coordinates, same
+        # frame as control_points above). Kept as a no-grad tensor and never added
+        # to parameters(); consumed only by the avoidance loss in the run loop. When
+        # --avoid is unset this is None and no avoidance code path runs.
+        self.avoid_points = None
+        if getattr(self.args, "avoid", None):
+            avoid_np = load_avoid_points(
+                self.args.avoid, sample_spacing_px=2.0, render_size=self.canvas_width
+            )
+            if avoid_np is not None:
+                self.avoid_points = torch.tensor(
+                    avoid_np, dtype=self.control_points.dtype, device=self.device
+                )
+                print(
+                    f"\t\tLoaded {len(self.avoid_points)} avoid points from "
+                    f"{len(self.args.avoid)} SVG file(s) for the avoidance constraint.",
+                    flush=True,
+                )
+
         return self.get_image()
+
+    @property
+    def active_control_points(self):
+        """The currently-optimized control points, in canvas pixel coordinates.
+
+        Excludes pinned origin / fixed-endpoint points (which live in separate
+        no-grad tensors and are never in self.control_points) and, when pruning is
+        enabled, the deactivated low-weight points -- mirroring the subset that
+        get_polyline_2d actually renders. Carries gradient, so a loss on this
+        tensor flows straight back to the optimized control points.
+        """
+        if self.args.prune_low_weights:
+            return self.control_points[self.is_active_cp]
+        return self.control_points
 
     def post_process_params(self):
         """Clamp weights and width and deactivate low-weight control points."""

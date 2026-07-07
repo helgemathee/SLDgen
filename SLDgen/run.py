@@ -13,6 +13,7 @@ import wiregrad as wg
 from PIL import Image
 from tqdm.auto import tqdm
 
+from .avoidance import avoidance_loss
 from .guidance.sd3_sds_guidance_control import SD3GuidanceControl
 from .metrics import get_all_metrics
 from .painter.painter import SLDBSplinePainter
@@ -92,6 +93,22 @@ def run(args):
             loss += args.repulsion_loss_weight * repulsion_loss
 
             tqdm_update["Repulsion Loss"] = (args.repulsion_loss_weight * repulsion_loss).item()
+
+        # Avoidance constraint (opt-in). Only runs when --avoid loaded obstacle
+        # points; otherwise this block is skipped entirely and behavior matches
+        # upstream. Repels the actively-optimized control points away from the
+        # fixed obstacle points, in canvas pixel coordinates (same frame as both).
+        if getattr(renderer, "avoid_points", None) is not None:
+            if loss is None:
+                loss = 0.0
+            avoid_loss = avoidance_loss(
+                renderer.active_control_points,
+                renderer.avoid_points,
+                d0=args.avoidance_distance,
+            )
+            loss += args.avoidance_weight * avoid_loss
+
+            tqdm_update["Avoidance Loss"] = (args.avoidance_weight * avoid_loss).item()
 
         if args.sparse_loss_weight > 0.0 and args.optimize_cp_weights:
             if loss is None:
