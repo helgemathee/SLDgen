@@ -112,8 +112,20 @@ def load_avoid_points(svg_paths, sample_spacing_px=2.0, render_size=None):
             # Inclusive samples from s=0 to s=length so path endpoints are covered.
             n_samples = max(2, int(round(length / sample_spacing_px)))
             for i in range(n_samples):
-                s = length * i / (n_samples - 1)
-                t = path.ilength(s)
+                # Evaluate endpoints directly by parameter: ilength(length) can raise
+                # "s not in [0, length]" on the final sample when floating-point
+                # rounding nudges s just past the internally-accumulated length.
+                if i == 0:
+                    t = 0.0
+                elif i == n_samples - 1:
+                    t = 1.0
+                else:
+                    s = length * i / (n_samples - 1)
+                    try:
+                        t = path.ilength(s)
+                    except ValueError:
+                        # Numerical edge case: fall back to uniform-in-parameter.
+                        t = i / (n_samples - 1)
                 point = path.point(t)
                 all_points.append((point.real, point.imag))
 
