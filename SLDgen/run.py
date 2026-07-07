@@ -14,6 +14,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 
 from .avoidance import avoidance_loss
+from .attraction import attraction_loss
 from .guidance.sd3_sds_guidance_control import SD3GuidanceControl
 from .metrics import get_all_metrics
 from .painter.painter import SLDBSplinePainter
@@ -109,6 +110,23 @@ def run(args):
             loss += args.avoidance_weight * avoid_loss
 
             tqdm_update["Avoidance Loss"] = (args.avoidance_weight * avoid_loss).item()
+
+        # Attraction constraint (opt-in). Mirror of the avoidance block above and
+        # composes with it: only runs when --attract loaded target points, else
+        # skipped entirely. Pulls the actively-optimized control points TOWARD the
+        # fixed target points, inactive within the dead-zone radius so the curve
+        # stays free near the target structure.
+        if getattr(renderer, "attract_points", None) is not None:
+            if loss is None:
+                loss = 0.0
+            attract_loss = attraction_loss(
+                renderer.active_control_points,
+                renderer.attract_points,
+                deadzone=args.attraction_distance,
+            )
+            loss += args.attraction_weight * attract_loss
+
+            tqdm_update["Attraction Loss"] = (args.attraction_weight * attract_loss).item()
 
         if args.sparse_loss_weight > 0.0 and args.optimize_cp_weights:
             if loss is None:

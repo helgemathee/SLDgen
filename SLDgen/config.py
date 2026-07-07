@@ -264,6 +264,49 @@ def parse_arguments(custom_args=None):
         ),
     )
 
+    # Attraction constraint (opt-in). Structural mirror of --avoid, but pulls the
+    # curve TOWARD the sampled points instead of repelling it. When --attract is
+    # unset, behavior is identical to upstream. Composes with --avoid (attract
+    # your own partition, avoid the others) and with --origin.
+    parser.add_argument(
+        "--attract",
+        type=str,
+        nargs="+",
+        default=None,
+        metavar="SVG",
+        help=(
+            "Optional. One or more SVG files whose sampled points the "
+            "newly-generated curve should be attracted (pulled) toward. Points "
+            "are sampled along every path in each SVG (same loader/coordinate "
+            "convention as --avoid) and treated as fixed targets during "
+            "optimization. Enables partition-aligned workflows: split a master "
+            "curve, then attract each fresh run to its own partition SVG. "
+            "Composes with --avoid and --origin. If omitted, behavior is "
+            "identical to upstream."
+        ),
+    )
+    parser.add_argument(
+        "--attraction-weight",
+        type=float,
+        default=0.004,
+        help=(
+            "Strength of the attraction pull (matches --avoidance-weight). "
+            "Only used when --attract is set."
+        ),
+    )
+    parser.add_argument(
+        "--attraction-distance",
+        type=float,
+        default=25.0,
+        help=(
+            "Dead-zone radius in canvas pixel units. The attraction pull is "
+            "INACTIVE within this distance of the target points and acts only "
+            "beyond it, so the curve stays free to explore near the target "
+            "structure (inverse of --avoidance-distance's active-within zone). "
+            "Only used when --attract is set."
+        ),
+    )
+
     # Other losses
     parser.add_argument(
         "--repulsion-loss-weight", type=float, default=0.004, help="Weight for the repulsion loss."
@@ -316,6 +359,12 @@ def parse_arguments(custom_args=None):
         for svg_path in args.avoid:
             if not Path(svg_path).exists():
                 parser.error(f"--avoid SVG file does not exist: {svg_path}")
+
+    # Validate the opt-in --attract feature. Default (None) keeps behavior unchanged.
+    if args.attract is not None:
+        for svg_path in args.attract:
+            if not Path(svg_path).exists():
+                parser.error(f"--attract SVG file does not exist: {svg_path}")
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"

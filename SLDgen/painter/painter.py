@@ -7,6 +7,7 @@ import svgwrite
 import torch
 
 from ..avoidance import load_avoid_points
+from ..attraction import load_attract_points
 from .initialize import initialize_control_points
 
 
@@ -267,6 +268,26 @@ class SLDBSplinePainter(torch.nn.Module):
                 print(
                     f"\t\tLoaded {len(self.avoid_points)} avoid points from "
                     f"{len(self.args.avoid)} SVG file(s) for the avoidance constraint.",
+                    flush=True,
+                )
+
+        # Load the opt-in attraction target points -- structural mirror of the
+        # avoidance block above, same loader and coordinate frame. Kept as a
+        # no-grad tensor, never added to parameters(); consumed only by the
+        # attraction loss in the run loop. When --attract is unset this is None
+        # and no attraction code path runs.
+        self.attract_points = None
+        if getattr(self.args, "attract", None):
+            attract_np = load_attract_points(
+                self.args.attract, sample_spacing_px=2.0, render_size=self.canvas_width
+            )
+            if attract_np is not None:
+                self.attract_points = torch.tensor(
+                    attract_np, dtype=self.control_points.dtype, device=self.device
+                )
+                print(
+                    f"\t\tLoaded {len(self.attract_points)} attract points from "
+                    f"{len(self.args.attract)} SVG file(s) for the attraction constraint.",
                     flush=True,
                 )
 
