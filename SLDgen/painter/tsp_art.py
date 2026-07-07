@@ -75,6 +75,48 @@ def read_tour(file):
     return order
 
 
+def _zoom_factor(density, n_point):
+    """The stipple() zoom (see stippler.py): ~500 px per Voronoi region.
+
+    Reproduced here so injected points (origin, --init-points) land in the same
+    zoomed pixel space that stipple() returns points in.
+    """
+    zoom = (n_point * 500) / (density.shape[0] * density.shape[1])
+    return max(int(round(np.sqrt(zoom))), 1)
+
+
+def load_init_points(svg_path, density, n_point):
+    """Load TSP seed points from an SVG for the --init-points feature.
+
+    Samples points along the SVG's paths in canvas pixel coordinates (reusing
+    the avoidance loader), then returns them in stipple()'s zoomed pixel space.
+    If the SVG yields more than ``n_point`` samples they are subsampled
+    uniformly along the path; if fewer, they are used as-is (noted below). The
+    order does not matter -- Concorde recomputes the tour.
+    """
+    # Reuse the exact avoidance/attraction SVG sampler (canvas-pixel frame).
+    from ..avoidance import load_avoid_points
+
+    pts = load_avoid_points([svg_path], sample_spacing_px=1.0, render_size=density.shape[1])
+    if pts is None or len(pts) == 0:
+        raise ValueError(f"--init-points: no points sampled from '{svg_path}'.")
+
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) > n_point:
+        # Uniform subsample along the arc-length-ordered samples.
+        idx = np.linspace(0, len(pts) - 1, n_point).astype(int)
+        pts = pts[idx]
+        print(f"\t\t--init-points: seeded TSP from {n_point} points sampled along "
+              f"'{svg_path}'.", flush=True)
+    else:
+        print(f"\t\t--init-points: '{svg_path}' yielded {len(pts)} points (fewer than "
+              f"--n-control-points={n_point}); using all as-is.", flush=True)
+
+    # Scale canvas pixels into stipple()'s zoomed frame so downstream (origin
+    # injection, normalization by density.shape) is consistent with stippling.
+    return pts * _zoom_factor(density, n_point)
+
+
 def init_tsp_art(
     density,
     n_point=500,
@@ -84,6 +126,7 @@ def init_tsp_art(
     debug=False,
     fixed_endpoints=False,
     origin=None,
+    init_points=None,
 ):
     """Initialize TSP art by stippling, generating a TSP problem, and solving it with Concorde."""
     if output_dir is None:
@@ -94,8 +137,13 @@ def init_tsp_art(
         root_tmp_dir = Path(output_dir)
         root_tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load image and sample points
-    regions, points, vertices = stipple(density, n_point=n_point, n_iter=n_iter, reverse=reverse)
+    # Sample the seed points: from a provided SVG (--init-points, opt-in) or by
+    # stippling the target density (upstream default). Either way Concorde solves
+    # the tour over the resulting point set below.
+    if init_points is not None:
+        points = load_init_points(init_points, density, n_point)
+    else:
+        regions, points, vertices = stipple(density, n_point=n_point, n_iter=n_iter, reverse=reverse)
 
     # Add new points to fix the endpoints of the curve if fixed_endpoints is True
     if fixed_endpoints:

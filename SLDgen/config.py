@@ -307,6 +307,26 @@ def parse_arguments(custom_args=None):
         ),
     )
 
+    # Init-from-SVG (opt-in). Seed the TSP tour from a provided SVG's points
+    # instead of stippling the target image. Pairs with --attract: the partition
+    # becomes the starting curve and attraction keeps it aligned as SDS refines.
+    parser.add_argument(
+        "--init-points",
+        type=str,
+        default=None,
+        metavar="SVG",
+        help=(
+            "Optional. Initialize the TSP tour from the points of this SVG "
+            "instead of stippling the target image, so SDS refines an aligned "
+            "starting curve rather than discovering structure. Points are "
+            "sampled along the SVG's paths (canvas pixel coordinates at "
+            "--render-size); if there are more than --n-control-points they are "
+            "subsampled uniformly along the path, if fewer they are used as-is. "
+            "Only valid with --init-method tsp; composes with --origin. If "
+            "omitted, behavior is identical to upstream."
+        ),
+    )
+
     # Other losses
     parser.add_argument(
         "--repulsion-loss-weight", type=float, default=0.004, help="Weight for the repulsion loss."
@@ -365,6 +385,14 @@ def parse_arguments(custom_args=None):
         for svg_path in args.attract:
             if not Path(svg_path).exists():
                 parser.error(f"--attract SVG file does not exist: {svg_path}")
+
+    # Validate the opt-in --init-points feature. Default (None) keeps behavior
+    # unchanged. Only meaningful for the TSP initializer.
+    if args.init_points is not None:
+        if not Path(args.init_points).exists():
+            parser.error(f"--init-points SVG file does not exist: {args.init_points}")
+        if args.init_method != "tsp":
+            parser.error("--init-points is only supported with --init-method tsp.")
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"
