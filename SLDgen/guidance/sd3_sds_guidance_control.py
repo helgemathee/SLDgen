@@ -151,7 +151,6 @@ class SD3GuidanceControl(nn.Module):
         """Create and encode the ControlNet conditioning image."""
         condition = create_condition(self.args.input_image, condition_name)
         condition = self.create_masked_condition(condition)
-        condition.save(f"{self.args.output_dir}/{condition_name}_condition.png")
 
         # Persist the conditioning image under a stable, documented name for reuse
         # as a partition label map (sld_partition.py --strategy labelmap). It is in
