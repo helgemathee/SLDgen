@@ -47,6 +47,8 @@ def initialize_control_points(args, mask=None):
             origin=getattr(args, "origin", None),
             init_points=getattr(args, "init_points", None),
             verbose=getattr(args, "verbose", False),
+            stipple_weight=getattr(args, "stipple_weight", None),
+            stipple_weight_mode=getattr(args, "stipple_weight_mode", "multiply"),
         )
     else:
         raise NotImplementedError(f"Initialization method {args.init_method} not implemented.")
@@ -119,13 +121,76 @@ def reorder_polyline(polyline):
     return ordered_polyline
 
 
+def apply_stipple_weight(density, weight_path, mode, verbose=False):
+    """Modulate the stipple density array with an external grayscale weight map.
+
+    Opt-in (--stipple-weight). ``density`` is the RMBG-1.4 mask as a numpy array
+    at render-size canvas resolution. ``rescale_obj`` bakes the
+    --object-size-ratio scaling into the *content* of that array but keeps its
+    shape at (render_size, render_size), so the array is a 1:1 overlay of canvas
+    space. The weight map is authored in that same canvas space at --render-size;
+    we therefore resample it to ``density.shape`` and combine directly, with no
+    further coordinate transform. (Getting this space right is the primary risk
+    called out in the brief -- the alignment test guards it.)
+
+    Conventions (documented per the brief):
+      * normalize: byte PNG -> [0, 1] by dividing by the dtype max -- the
+        codebase's image->float convention (see ``create_masked_image`` in
+        targets.py). Painted values are preserved (no min-max stretch), so soft
+        weight fields stay soft.
+      * resample: bilinear. The weight map is a continuous density field, so
+        bilinear preserves its gradients without block artifacts; a hard region
+        edge shifts by at most one density pixel, far below stipple()'s
+        ~500 px/region zoom.
+    """
+    import cv2  # already a module-level dependency of this file
+
+    wmap = cv2.imread(str(weight_path), cv2.IMREAD_GRAYSCALE)
+    if wmap is None:
+        raise ValueError(f"--stipple-weight: could not read image '{weight_path}'.")
+    wmap = wmap.astype(np.float64) / np.iinfo(np.uint8).max  # [0, 1], values preserved
+
+    # Resample to the density array's resolution (canvas space at render_size).
+    if wmap.shape != density.shape:
+        wmap = cv2.resize(
+            wmap, (density.shape[1], density.shape[0]), interpolation=cv2.INTER_LINEAR
+        )
+
+    if verbose:
+        # Cheap diagnostic (same rationale as the init-coords line): confirm the
+        # weight map landed in [0, 1] at the density resolution.
+        print(
+            f"\tstipple weight ({mode}): "
+            f"min={wmap.min():.3f} max={wmap.max():.3f} mean={wmap.mean():.3f} "
+            f"(resampled to {density.shape[0]}x{density.shape[1]})",
+            flush=True,
+        )
+
+    if mode == "replace":
+        # Weight map becomes the density field directly (RMBG mask bypassed).
+        return wmap.astype(density.dtype)
+    # multiply (default): keep subject-awareness -- a bright weight value over
+    # background still can't stipple, because the RMBG density is ~0 there.
+    return (density * wmap).astype(density.dtype)
+
+
 def initialize_from_tsp(
     n_control_points, mask, output_dir, debug, fixed_endpoints, origin=None, init_points=None,
-    verbose=False,
+    verbose=False, stipple_weight=None, stipple_weight_mode="multiply",
 ):
+    # The stipple density is the RMBG mask (canvas space, render_size). Opt-in:
+    # --stipple-weight modulates it before it seeds the TSP curve; without the
+    # flag this is exactly mask.numpy() and the path is byte-identical to upstream.
+    # A copy via astype() avoids mutating the shared mask tensor's buffer.
+    density = mask.numpy()
+    if stipple_weight is not None:
+        density = apply_stipple_weight(
+            density.astype(np.float64), stipple_weight, stipple_weight_mode, verbose
+        )
+
     # Create initial ordered points using the TSP-based initializer
     control_points = init_tsp_art(
-        mask.numpy(),
+        density,
         n_point=n_control_points,
         n_iter=25,
         reverse=True,

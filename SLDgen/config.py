@@ -327,6 +327,41 @@ def parse_arguments(custom_args=None):
         ),
     )
 
+    # Weighted stippling (opt-in). Modulate the stipple density with an external
+    # grayscale weight map so ink density is controllable per run. When
+    # --stipple-weight is unset, behavior is identical to upstream: the RMBG-1.4
+    # mask drives density unchanged.
+    parser.add_argument(
+        "--stipple-weight",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Optional. Grayscale PNG (canvas space at --render-size) that "
+            "modulates the stipple density seeding the initial TSP curve. It is "
+            "resampled to the density resolution and normalized to [0, 1] "
+            "(byte/255, painted values preserved). See --stipple-weight-mode for "
+            "how it is combined with the RMBG-1.4 mask. Only valid with "
+            "--init-method tsp (only the TSP initializer stipples). Composes with "
+            "--origin/--avoid/--attract. If omitted, behavior is identical to "
+            "upstream."
+        ),
+    )
+    parser.add_argument(
+        "--stipple-weight-mode",
+        type=str,
+        default="multiply",
+        choices=["multiply", "replace"],
+        help=(
+            "How --stipple-weight combines with the RMBG-1.4 mask. 'multiply' "
+            "(default) elementwise-multiplies the weight map into the mask, "
+            "keeping subject-awareness (bright weight over background still can't "
+            "stipple into the void). 'replace' uses the weight map directly as "
+            "the density field, bypassing the mask (total control). Only used "
+            "when --stipple-weight is set."
+        ),
+    )
+
     # Other losses
     parser.add_argument(
         "--repulsion-loss-weight", type=float, default=0.004, help="Weight for the repulsion loss."
@@ -393,6 +428,15 @@ def parse_arguments(custom_args=None):
             parser.error(f"--init-points SVG file does not exist: {args.init_points}")
         if args.init_method != "tsp":
             parser.error("--init-points is only supported with --init-method tsp.")
+
+    # Validate the opt-in --stipple-weight feature. Default (None) keeps behavior
+    # unchanged. Only the TSP initializer stipples, so the weight map is only
+    # meaningful there.
+    if args.stipple_weight is not None:
+        if not Path(args.stipple_weight).exists():
+            parser.error(f"--stipple-weight file does not exist: {args.stipple_weight}")
+        if args.init_method != "tsp":
+            parser.error("--stipple-weight is only supported with --init-method tsp.")
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"
