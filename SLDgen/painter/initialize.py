@@ -199,6 +199,7 @@ def initialize_from_tsp(
         fixed_endpoints=fixed_endpoints,
         origin=origin,
         init_points=init_points,
+        verbose=verbose,
     )
     # Reorder so the polyline starts at the longest segment and convert to array.
     # When an origin is pinned, init_tsp_art has already rotated the tour so the

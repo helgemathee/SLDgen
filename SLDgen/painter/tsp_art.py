@@ -127,6 +127,7 @@ def init_tsp_art(
     fixed_endpoints=False,
     origin=None,
     init_points=None,
+    verbose=False,
 ):
     """Initialize TSP art by stippling, generating a TSP problem, and solving it with Concorde."""
     if output_dir is None:
@@ -167,20 +168,22 @@ def init_tsp_art(
             [dumb_node, extrem_left, extrem_right, mid_left, mid_right, points], axis=0
         )
 
-    # Inject the pinned origin as an extra node so Concorde is forced to route
-    # through it; the tour is later rotated so this node becomes index 0.
-    origin_index = None
+    # Locate the pinned origin in the same (zoomed) pixel space stipple() uses,
+    # WITHOUT injecting it as a Concorde node. Running Concorde on the real stipple
+    # points only keeps the tour a clean closed loop through the ink; we later cut
+    # that loop at the point nearest the origin so the curve enters the subject at
+    # the closest ink and flows outward -- no long transit stroke to a Concorde-
+    # chosen neighbour on the far side. The origin is prepended as a fixed pre-point
+    # after the tour is rotated (see below).
+    origin_px = None
     if origin is not None:
         # Mirror stipple()'s zoom (see stippler.py) so the origin lands in the same
         # (zoomed) pixel space as the points that stipple() returns.
-        zoom = (n_point * 500) / (density.shape[0] * density.shape[1])
-        zoom = max(int(round(np.sqrt(zoom))), 1)
+        zoom = _zoom_factor(density, n_point)
         points = np.array(points)
-        origin_index = len(points)
         origin_px = np.array(
-            [[origin[0] * density.shape[1] * zoom, origin[1] * density.shape[0] * zoom]]
+            [origin[0] * density.shape[1] * zoom, origin[1] * density.shape[0] * zoom]
         )
-        points = np.concatenate([points, origin_px], axis=0)
 
     # Save the points to a TSP file
     with open(root_tmp_dir / "point.tsp", "w") as f:
@@ -206,11 +209,32 @@ def init_tsp_art(
         index_of_0 = order.index(0)
         order = np.roll(order, -index_of_0 - 1, axis=0)[:-1]
     elif origin is not None:
-        # Rotate the closed tour so the injected origin node becomes index 0.
-        # Because the curve is rendered open, index 0 becomes the start endpoint.
-        index_of_origin = order.index(origin_index)
-        order = np.roll(order, -index_of_origin, axis=0)
+        # The Concorde tour is a closed loop with no fixed start; rotate it so the
+        # stipple point NEAREST the origin becomes index 0. Rotation preserves
+        # adjacency, so the path itself is unchanged -- only where it starts moves.
+        pts = np.asarray(points, dtype=float)
+        dists = np.linalg.norm(pts[order] - origin_px, axis=1)
+        nearest_pos = int(np.argmin(dists))
+        order = np.roll(order, -nearest_pos, axis=0)
+        if verbose:
+            # Report in normalized canvas space ([0, 1]), the frame the origin was
+            # specified in. Zoom cancels, so this is the true origin->nearest tail.
+            near_px = pts[order[0]] / max(zoom, 1)
+            near_norm = np.array([near_px[0] / density.shape[1], near_px[1] / density.shape[0]])
+            tail = float(np.linalg.norm(near_norm - np.array([origin[0], origin[1]])))
+            print(
+                f"\t\t--origin nearest-start: tour node {int(order[0])} at normalized "
+                f"({near_norm[0]:.3f}, {near_norm[1]:.3f}); tail from origin "
+                f"({origin[0]:.3f}, {origin[1]:.3f}) = {tail:.4f}.",
+                flush=True,
+            )
     ordered_points = np.asarray(points[order], dtype=float)
+
+    # Prepend the origin as a fixed pre-point ahead of the nearest ink. It is kept
+    # out of the Concorde tour (above), so this is the only place it enters the
+    # curve; downstream (painter.py) pins control_points[0] as the clamped start.
+    if origin is not None:
+        ordered_points = np.concatenate([origin_px.reshape(1, 2), ordered_points], axis=0)
 
     # stipple() (and the origin / init-points injectors, which deliberately mirror
     # it) work in a zoomed pixel space of ~500 px per Voronoi region: coordinates
