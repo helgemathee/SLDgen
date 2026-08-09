@@ -1,8 +1,14 @@
 # Spec 1 — SLDgen core: checkpointing, resume, and segmented runs
 
-**Status:** draft for review
+**Status:** ✅ **complete** — implemented, tested and merged to `main`
+(commit `4d30690`, 2026-08-09), including the three Spec 2 §2 amendments.
 **Scope:** changes inside the SLDgen package only. No web service, no daemon, no UI.
 **Repo:** `helgemathee/SLDgen` (the `sm120-cuda13` fork). Conda env `sldgen`.
+
+> The body below is the design as written. Where the implementation departed from
+> it, §13 says so and why; that section is the authority on what the code
+> actually does. §11 (Phase 2, the resident-worker library API) was flagged as a
+> later decision and remains **not started**, as recommended.
 
 ---
 
@@ -334,3 +340,112 @@ if slices are 200 iterations, it dominates.
   a service concern, and is achieved simply by resuming the same checkpoint
   twice into different output directories.
 - Any database, queue, HTTP surface or file-watching. Spec 2.
+
+---
+
+## 13. As built
+
+Everything in §§1–10 landed, plus the three amendments from Spec 2 §2 (graceful
+SIGTERM, `state.json`, distinct exit codes), which the implementation order in
+`readme.md` folds into this spec's work.
+
+### Files
+
+| File | Change |
+|---|---|
+| `SLDgen/checkpoint.py` | **new.** Checkpoint save/load, structural fingerprint, `state.json`, `GracefulStop`, exit-code classification. Imports only stdlib + torch, so it is testable without diffusers. |
+| `SLDgen/config.py` | `--stop-at` / `--resume` / `--checkpoint-interval` and all §4 validation. Records `args.raw_caption`. |
+| `SLDgen/painter/painter.py` | `state_dict` / `load_state_dict` / `init_from_checkpoint`; non-geometry init extracted to `_init_shape_groups_and_constraints`. |
+| `SLDgen/painter/painter_optimizer.py` | `state_dict` / `load_state_dict` / `param_group_names`, with the param-group assertion. |
+| `SLDgen/run.py` | Segmented loop, resume path, checkpoint + heartbeat writes, completion gating, and `finalize()`. |
+| `SLDgen/utils.py` | `get_sparse_loss_weight` moved here from `run.py`. |
+| `sldgen.py` | Exit-code mapping and an extended module docstring. |
+
+### Departures from the design above
+
+1. **A fresh run starts at epoch −1, not 0.** §9 proposes
+   `for epoch in range(start_epoch + 1, stop_at + 1)` with `start_epoch = 0` for a
+   fresh run — but the existing loop is `range(num_iter + 1)` and **epoch 0
+   performs an optimizer step**, so that would have silently dropped one
+   iteration from every run and broken the bit-identity requirement in §2. A
+   fresh run therefore starts from `start_epoch = -1` ("nothing completed yet");
+   on resume it comes from the checkpoint, as specified.
+
+2. **`state.json` and the SIGTERM handler are gated on the checkpointing flags.**
+   Spec 2 §2 describes both as unconditional, which conflicts with §2 here
+   ("bit-identical … including file layout"). They engage when any of
+   `--stop-at` / `--resume` / `--checkpoint-interval` is set
+   (`checkpoint.checkpointing_enabled`). The worker is unaffected: `stop_at` is
+   `NOT NULL` in Spec 2's schema, so every worker-launched segment passes it.
+
+3. **`get_sparse_loss_weight` moved to `utils.py`.** Unchanged behaviour; it is
+   the schedule the invariant test has to assert against, and importing it from
+   `run.py` would drag in diffusers, wiregrad and pydiffvg.
+
+4. **Periodic checkpoints skip epoch 0** (`epoch % interval == 0` is true there),
+   mirroring the existing `epoch > 0` guard on intermediate frames.
+
+5. **A checkpoint is also written when a run completes**, not only at an early
+   `--stop-at`. Finalisation is pure now, so that checkpoint correctly describes
+   the trajectory — and a completed run is then resumable-by-inspection rather
+   than a dead end. Only when checkpointing is enabled at all.
+
+6. **`caption` is fingerprinted from `args.raw_caption`**, captured at parse time.
+   `SD3GuidanceControl.create_caption()` rewrites `args.caption` in place, so
+   fingerprinting the live attribute would compare a BLIP-2-derived caption
+   against the `""` the next segment passes, and fail every resume.
+
+7. **`init_points`, `stipple_weight` and `stipple_weight_mode` are explicitly
+   excluded from the fingerprint.** §6's list already omits them; making it
+   deliberate matters, because `--resume` rejects those flags, so including them
+   would render any run that used them permanently unresumable.
+
+8. **Exit code `143` for the second SIGTERM.** Spec 2 §2 defines 0/2/3/4 and says
+   "anything else = unknown failure", but leaves the immediate-abort path
+   undefined. That path loses the segment's uncheckpointed work, so it must not
+   report the graceful `0`; 143 (128 + SIGTERM) is the conventional value.
+
+9. **§7's coordinate-space recommendation is implemented**: `scale_w`, `scale_h`,
+   `original_center_x`, `original_center_y` are stored in every checkpoint under
+   `target_space`, and `config.json` (which already dumps all of `args`) is now
+   written alongside every checkpoint rather than only at the end.
+
+### Two pre-existing bugs found and deliberately *not* fixed
+
+Both sit in the finalisation path this spec refactors. Fixing either would change
+the output of existing runs, which is outside an opt-in feature's remit — they
+are recorded in comments in `run.finalize` and need a separate decision.
+
+1. **`increase_object_size` never reaches `final_sld.svg`.** It mutates
+   `renderer.shapes` in place, but `save_svg` immediately calls `set_shapes()`,
+   which rebuilds the shapes from the control points. With the default
+   `--object-size-ratio 0.75` the rescale triggers for most targets, so the flag
+   appears to be doing nothing.
+2. **The 2× final export doubles the `--origin` pinned tensors but not the
+   `--fixed-endpoints` ones** (`first2points` / `last2points`), so
+   `final_sld.png` is inconsistent in fixed-endpoints mode.
+
+### Tests
+
+§10 asked for one test file; the work produced three, all CPU-only, diffusion-free
+and about 15 s in total. Run from the repo root with `PYTHONPATH=.`.
+
+| File | Covers |
+|---|---|
+| `test_resume_geom.py` | The §8 invariant on the real painter/optimizer/`post_process_params` with a synthetic circle-pull loss (RNG-jittered, so RNG restoration is genuinely exercised); schedule invariance; fingerprint rejection per field; `--origin` pinned-tensor round-trip; the monotone prune mask surviving a checkpoint. |
+| `test_checkpoint_ops.py` | Every §4 validation rule; strict opt-in; checkpoint round-trip and `latest.pt` being a real copy; `state.json` contents, relative paths and atomicity; exit-code classification; graceful SIGTERM and the second-signal abort (in a subprocess); non-destructive finalisation. |
+| `test_run_segments.py` | `run()` end to end with only the diffusion model, target loader, metrics and ffmpeg stubbed. The headline assertion is §8 black-box: an uninterrupted run and a stopped-then-resumed run produce a **byte-identical `final_sld.svg`**. |
+
+§10's "second, slower opt-in check" — the real pipeline in two segments on the GPU
+— was **not run**. It remains the one piece of evidence this work does not have.
+
+Two further checks, run once rather than committed:
+
+- **Sabotage test.** Disabling the RNG restore, disabling the Adam state restore,
+  and introducing an off-by-one on resume each make `test_resume_geom.py` fail, so
+  it is not passing for the wrong reason.
+- **Byte-identity against HEAD.** The same stubbed no-flags run, executed in a git
+  worktree at the pre-change commit and in the working tree, produces identical
+  `final_sld.svg`, `config.json`, `svg_logs/` and `svg_to_png/`. Only the plotly
+  `weights_logs/basis_spline_*.svg` charts differ — and those differ between two
+  runs of unmodified HEAD as well, since plotly embeds nondeterministic ids.
