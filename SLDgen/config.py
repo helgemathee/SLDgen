@@ -388,6 +388,52 @@ def parse_arguments(custom_args=None):
         help="Weight for the length shortening loss.",
     )
 
+    # Checkpointing and segmented execution (opt-in). With none of these set the
+    # run behaves exactly as before: no checkpoints/ directory, no state.json,
+    # no signal handler. --num-iter keeps its meaning as the HORIZON that every
+    # schedule normalizes against; --stop-at only says where THIS invocation
+    # stops, which is what makes a short preview a genuine prefix of the long
+    # run it previews rather than a differently-scheduled drawing.
+    parser.add_argument(
+        "--stop-at",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Optional. Execute up to and including absolute epoch N, write a "
+            "checkpoint and exit 0, instead of running all the way to "
+            "--num-iter. Must be in (0, --num-iter]. The run is only finalized "
+            "(final_sld.svg/png, metrics, video) when it reaches --num-iter, so "
+            "a stopped segment leaves only a checkpoint behind. If omitted, "
+            "behavior is identical to upstream."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        metavar="CKPT",
+        help=(
+            "Optional. Continue the trajectory stored in this checkpoint file "
+            "(as written by --stop-at or --checkpoint-interval). The starting "
+            "epoch comes from the file, so there is no --start-iter. All "
+            "run-shaping arguments must match the ones the checkpoint was "
+            "produced with, or the run refuses to start: resume continues a "
+            "trajectory, it never redirects one."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Optional. Additionally write a checkpoint every N epochs, for "
+            "crash recovery. 0 (the default) disables periodic checkpointing; a "
+            "checkpoint is still written when --stop-at is reached."
+        ),
+    )
+
     # Metrics
     parser.add_argument(
         "--aesthetic-predictor-model-path",
@@ -398,6 +444,12 @@ def parse_arguments(custom_args=None):
 
     # Parse arguments
     args = parser.parse_args(custom_args)
+
+    # Keep the caption exactly as the caller gave it. SD3GuidanceControl replaces
+    # an empty --caption with a BLIP-2-derived one by mutating args.caption in
+    # place, so this is the only copy that still identifies the trajectory when a
+    # later segment is fingerprinted against its checkpoint.
+    args.raw_caption = args.caption
 
     # Validate the opt-in --origin feature. Default (None) keeps behavior unchanged.
     if args.origin is not None:
@@ -437,6 +489,48 @@ def parse_arguments(custom_args=None):
             parser.error(f"--stipple-weight file does not exist: {args.stipple_weight}")
         if args.init_method != "tsp":
             parser.error("--stipple-weight is only supported with --init-method tsp.")
+
+    # Validate the opt-in checkpointing flags. Defaults (None/None/0) keep
+    # behavior unchanged. Everything that can be caught before a model is loaded
+    # is caught here, so a bad invocation costs a second rather than a minute.
+    if args.checkpoint_interval < 0:
+        parser.error(f"--checkpoint-interval must be >= 0; got {args.checkpoint_interval}.")
+
+    if args.stop_at is not None:
+        if args.stop_at <= 0:
+            parser.error(f"--stop-at must be > 0; got {args.stop_at}.")
+        if args.stop_at > args.num_iter:
+            parser.error(
+                f"--stop-at ({args.stop_at}) must be <= --num-iter ({args.num_iter}). "
+                "--num-iter is the horizon the schedules normalize against; to run "
+                "further, start a new run at a larger horizon."
+            )
+
+    if args.resume is not None:
+        # Both only affect initialization, and initialization does not re-run on
+        # resume. Erroring beats letting the caller believe they took effect.
+        if args.init_points is not None:
+            parser.error("--resume is incompatible with --init-points (initialization only).")
+        if args.stipple_weight is not None:
+            parser.error("--resume is incompatible with --stipple-weight (initialization only).")
+        from .checkpoint import CheckpointError, load_checkpoint
+
+        try:
+            resume_ckpt = load_checkpoint(args.resume)
+        except CheckpointError as exc:
+            parser.error(str(exc))
+        if args.stop_at is not None and args.stop_at <= resume_ckpt["epoch"]:
+            parser.error(
+                f"--stop-at ({args.stop_at}) must be greater than the checkpoint's "
+                f"epoch ({resume_ckpt['epoch']}); as given this segment would run "
+                "zero iterations and rewrite an identical checkpoint."
+            )
+        if resume_ckpt["epoch"] >= args.num_iter:
+            parser.error(
+                f"the checkpoint is already at epoch {resume_ckpt['epoch']} of horizon "
+                f"--num-iter {args.num_iter}; that trajectory is complete."
+            )
+        del resume_ckpt
 
     # Set some fixed parameters
     args.diffusion_model = "stabilityai/stable-diffusion-3.5-medium"

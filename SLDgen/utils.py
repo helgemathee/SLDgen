@@ -3,6 +3,24 @@ import subprocess
 import torch
 
 
+def get_sparse_loss_weight(args, epoch):
+    """Return sparse loss weight, supporting progressive schedules.
+
+    A pure function of the absolute epoch and the horizon (``--num-iter``), never
+    of "iterations executed so far in this process". That is what makes a
+    segmented run identical to an uninterrupted one, and what makes a short
+    preview a genuine prefix of the long run it previews. Any schedule added
+    later must obey the same rule.
+
+    Lives in utils (not run) so it can be imported without pulling in diffusers.
+    """
+    target_weight = args.sparse_loss_weight
+    if args.sparse_loss_progressive == "linear":
+        return target_weight * (epoch / args.num_iter)
+    else:
+        return target_weight
+
+
 def increase_object_size(renderer, args):
     """Restore the object's original size and position on the renderer canvas."""
     with torch.no_grad():

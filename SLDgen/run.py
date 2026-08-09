@@ -6,6 +6,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 warnings.filterwarnings("ignore")
 warnings.simplefilter("ignore")
 import json
+import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -15,31 +17,24 @@ from tqdm.auto import tqdm
 
 from .avoidance import avoidance_loss
 from .attraction import attraction_loss
+from .checkpoint import (
+    GracefulStop,
+    assert_fingerprint_matches,
+    checkpointing_enabled,
+    load_checkpoint,
+    relative_to_output,
+    restore_rng,
+    save_checkpoint,
+    structural_fingerprint,
+    target_sha256,
+    write_state,
+)
 from .guidance.sd3_sds_guidance_control import SD3GuidanceControl
 from .metrics import get_all_metrics
 from .painter.painter import SLDBSplinePainter
 from .painter.painter_optimizer import PainterOptimizer
 from .targets import get_target
-from .utils import increase_object_size, make_video
-
-
-def get_sparse_loss_weight(args, epoch):
-    """Return sparse loss weight, supporting progressive schedules."""
-
-    def is_number(s):
-        try:
-            float(s)
-            return True
-        except TypeError:
-            return False
-        except ValueError:
-            return False
-
-    target_weight = args.sparse_loss_weight
-    if args.sparse_loss_progressive == "linear":
-        return target_weight * (epoch / args.num_iter)
-    else:
-        return target_weight
+from .utils import get_sparse_loss_weight, increase_object_size, make_video
 
 
 def save_current_step(renderer, args, epoch, img):
@@ -52,8 +47,95 @@ def save_current_step(renderer, args, epoch, img):
         renderer.save_basis_spline(f"{args.output_dir}/weights_logs/basis_spline_iter{epoch}.svg")
 
 
+def finalize(renderer, args):
+    """Export the finished drawing, leaving the renderer exactly as it was found.
+
+    Finalisation used to mutate the renderer in place -- doubling the canvas, the
+    control points and the widths -- so a "finished" run could not be continued
+    from its own end state and any checkpoint written afterwards would have been
+    wrong by a factor of two. This does the same export on the same values, then
+    puts every mutated attribute back, so the last checkpoint of a run always
+    describes the trajectory rather than the export.
+
+    Restoring the original tensor *objects* matters as much as restoring their
+    values: ``control_points * 2`` produces a new non-leaf tensor, which would
+    otherwise leave the optimizer holding a parameter the renderer no longer uses.
+    """
+    pinned = (
+        ("first_origin_points", "first_origin_widths")
+        if getattr(args, "origin", None) is not None
+        else ()
+    )
+    saved = {
+        "canvas_width": renderer.canvas_width,
+        "canvas_height": renderer.canvas_height,
+        "control_points": renderer.control_points,
+        "width": renderer.width,
+    }
+    saved.update({name: getattr(renderer, name) for name in pinned})
+
+    try:
+        if hasattr(args, "scale_w") or hasattr(args, "scale_h"):
+            # Increases the size of the object on the canvas to its original size
+            # if it has been reduced. NOTE: save_svg below rebuilds renderer.shapes
+            # from the control points via set_shapes(), so this rescale does not
+            # currently reach final_sld.svg. That is long-standing behaviour and
+            # is preserved deliberately -- changing it would silently alter the
+            # output of every run whose object was downscaled.
+            increase_object_size(renderer, args)
+        renderer.save_svg(args.output_dir, "final_sld")
+
+        # Rasterize final SLD at double resolution for better quality, and save it
+        renderer.canvas_width *= 2
+        renderer.canvas_height *= 2
+        renderer.control_points = renderer.control_points * 2
+        renderer.width = renderer.width * 2
+        if getattr(args, "origin", None) is not None:
+            # Keep the pinned origin (and its widths) consistent with the doubled
+            # control points for the final double-resolution export.
+            renderer.first_origin_points = renderer.first_origin_points * 2
+            renderer.first_origin_widths = renderer.first_origin_widths * 2
+        raster_sld = renderer.get_image().permute(0, 2, 3, 1).detach().cpu().numpy()[0]
+        raster_sld = Image.fromarray((raster_sld * 255).astype(np.uint8))
+        raster_sld.save(f"{args.output_dir}/final_sld.png")
+    finally:
+        for name, value in saved.items():
+            setattr(renderer, name, value)
+
+
 def run(args):
     print("Running SLDgen:", flush=True)
+
+    # Segmented execution (opt-in). --num-iter is the horizon every schedule
+    # normalises against and the epoch at which the run is complete; stop_at is
+    # only where THIS invocation stops. Both default to the same value, which is
+    # why an invocation with no new flags behaves exactly as it always did.
+    ckpt_enabled = checkpointing_enabled(args)
+    stop_at = args.stop_at if args.stop_at is not None else args.num_iter
+    target_hash = target_sha256(args.target) if ckpt_enabled else None
+
+    checkpoint = None
+    if args.resume is not None:
+        checkpoint = load_checkpoint(args.resume)
+        assert_fingerprint_matches(
+            checkpoint["structural_fingerprint"],
+            structural_fingerprint(args, target_hash=target_hash),
+        )
+        # Take the caption from the checkpoint rather than re-deriving it: with
+        # --caption "" it was produced by BLIP-2, which is both a nondeterminism
+        # risk and a model load we can skip entirely.
+        args.caption = checkpoint["resolved_caption"]
+        print(
+            f"\tResuming {args.resume} at epoch {checkpoint['epoch']} "
+            f"(horizon {args.num_iter}, this segment stops at {stop_at}).",
+            flush=True,
+        )
+
+    # The loop counter is 0-based and epoch 0 performs a step, so "nothing done
+    # yet" is epoch -1. A checkpoint stores the last COMPLETED epoch.
+    start_epoch = -1 if checkpoint is None else int(checkpoint["epoch"])
+    if ckpt_enabled:
+        write_state(args, epoch=max(start_epoch, 0), phase="init")
 
     # Set up input, renderer and optimizer
     inputs, mask = get_target(args)
@@ -62,21 +144,52 @@ def run(args):
     optimizer = PainterOptimizer(args, renderer)
 
     # Initialize renderer and optimizer
-    init_img = renderer.init_image()
+    if checkpoint is None:
+        init_img = renderer.init_image()
+    else:
+        init_img = renderer.init_from_checkpoint(checkpoint)
     optimizer.init_optimizers()
+    if checkpoint is not None:
+        optimizer.load_state_dict(checkpoint["optimizer"], checkpoint["param_group_names"])
 
     # Setting up the SDS loss
     print(f"\tUsing {args.diffusion_model} as the diffusion model.", flush=True)
     sds_loss = SD3GuidanceControl(args=args, device=args.device)
+    resolved_caption = args.caption
 
     print("\tStarting the optimization process...", flush=True)
 
-    # Save the initial drawing before optimization
-    save_current_step(renderer, args, epoch=0, img=init_img)
+    # Save the initial drawing before optimization. On resume that frame already
+    # exists, and re-rendering it would insert a duplicate into the video.
+    latest_preview = None
+    latest_checkpoint = None
+    if checkpoint is None:
+        save_current_step(renderer, args, epoch=0, img=init_img)
+        latest_preview = f"svg_to_png/iter_{0:04d}.png"
+    else:
+        # Point the heartbeat at the newest frame an earlier segment left behind,
+        # so a resumed job has a preview to show before its first save interval.
+        previews = list(Path(args.output_dir).glob("svg_to_png/iter_*.png"))
+        if previews:
+            newest = max(previews, key=lambda p: int(p.stem.split("_")[-1]))
+            latest_preview = relative_to_output(args, newest)
+
+    # Restoring the RNG must be the last thing before the loop: everything above
+    # (target masking, initialisation, building the guidance pipeline) draws from
+    # these generators, and a resumed segment must enter its first iteration in
+    # the state the uninterrupted run would have been in.
+    if checkpoint is not None:
+        restore_rng(checkpoint["rng"])
+
+    graceful = GracefulStop()
+    if ckpt_enabled:
+        graceful.install()
 
     # Optimization loop
     inputs = inputs.detach()
-    epoch_range = tqdm(range(args.num_iter + 1), bar_format="    {l_bar}{bar}{r_bar}")
+    epoch_range = tqdm(range(start_epoch + 1, stop_at + 1), bar_format="    {l_bar}{bar}{r_bar}")
+    last_epoch = start_epoch
+    segment_start_time = time.time()
     for epoch in epoch_range:
         optimizer.zero_grad_()
 
@@ -177,26 +290,95 @@ def run(args):
         # Save intermediate steps
         if epoch % args.save_interval == 0 and epoch > 0:
             save_current_step(renderer, args, epoch, raster_sld)
+            latest_preview = f"svg_to_png/iter_{epoch:04d}.png"
 
-    # Save final SLD
-    if hasattr(args, "scale_w") or hasattr(args, "scale_h"):
-        # Increases the size of the object on the canvas to its original size if it has been reduced
-        increase_object_size(renderer, args)
-    renderer.save_svg(args.output_dir, "final_sld")
+        last_epoch = epoch
 
-    # Rasterize final SLD at double resolution for better quality, and save it
-    renderer.canvas_width *= 2
-    renderer.canvas_height *= 2
-    renderer.control_points = renderer.control_points * 2
-    renderer.width = renderer.width * 2
-    if getattr(args, "origin", None) is not None:
-        # Keep the pinned origin (and its widths) consistent with the doubled
-        # control points for the final double-resolution export.
-        renderer.first_origin_points = renderer.first_origin_points * 2
-        renderer.first_origin_widths = renderer.first_origin_widths * 2
-    raster_sld = renderer.get_image().permute(0, 2, 3, 1).detach().cpu().numpy()[0]
-    raster_sld = Image.fromarray((raster_sld * 255).astype(np.uint8))
-    raster_sld.save(f"{args.output_dir}/final_sld.png")
+        # Heartbeat and periodic checkpoints (opt-in; nothing below runs unless
+        # one of the checkpointing flags was passed).
+        if ckpt_enabled:
+            rate = (epoch - start_epoch) / max(time.time() - segment_start_time, 1e-9)
+            # `epoch > 0` mirrors the intermediate-frame guard: epoch 0 is a
+            # completed iteration, but checkpointing it right after start is noise.
+            due = (
+                args.checkpoint_interval > 0
+                and epoch > 0
+                and epoch % args.checkpoint_interval == 0
+            )
+            if due and epoch < stop_at:
+                path = save_checkpoint(
+                    renderer, optimizer, args, epoch, resolved_caption, target_hash=target_hash
+                )
+                save_config(args)
+                write_state(
+                    args,
+                    epoch,
+                    phase="optimizing",
+                    iters_per_sec=rate,
+                    latest_checkpoint=relative_to_output(args, path),
+                    latest_preview=latest_preview,
+                    resolved_caption=resolved_caption,
+                )
+            elif epoch % args.save_interval == 0:
+                write_state(
+                    args,
+                    epoch,
+                    phase="optimizing",
+                    iters_per_sec=rate,
+                    latest_preview=latest_preview,
+                    resolved_caption=resolved_caption,
+                )
+
+            if graceful.requested:
+                break
+
+    if ckpt_enabled:
+        graceful.uninstall()
+        rate = (last_epoch - start_epoch) / max(time.time() - segment_start_time, 1e-9)
+        path = save_checkpoint(
+            renderer, optimizer, args, last_epoch, resolved_caption, target_hash=target_hash
+        )
+        save_config(args)
+        latest_checkpoint = relative_to_output(args, path)
+        write_state(
+            args,
+            last_epoch,
+            phase="optimizing",
+            iters_per_sec=rate,
+            latest_checkpoint=latest_checkpoint,
+            latest_preview=latest_preview,
+            resolved_caption=resolved_caption,
+        )
+
+    # A run is complete only when it reaches its horizon. A segment that stops
+    # short leaves a checkpoint and nothing else: no final SVG, no metrics, no
+    # video, and svg_logs/ + svg_to_png/ keep accumulating across segments so the
+    # assembled video still spans the whole trajectory.
+    if last_epoch < args.num_iter:
+        reason = "SIGTERM" if graceful.requested else f"--stop-at {stop_at}"
+        resume_hint = (
+            f" Resume with --resume {Path(args.output_dir) / latest_checkpoint}"
+            if latest_checkpoint
+            else ""
+        )
+        print(
+            f"\tStopped at epoch {last_epoch} of {args.num_iter} ({reason}).{resume_hint}",
+            flush=True,
+        )
+        return
+
+    if ckpt_enabled:
+        write_state(
+            args,
+            last_epoch,
+            phase="finalizing",
+            latest_checkpoint=latest_checkpoint,
+            latest_preview=latest_preview,
+            resolved_caption=resolved_caption,
+        )
+
+    # Save final SLD (pure export: the renderer is unchanged afterwards)
+    finalize(renderer, args)
 
     # Compute all metrics
     print("\tComputing metrics...")
@@ -213,6 +395,16 @@ def run(args):
     # Save video
     print("\tSaving video...")
     make_video(args)
+
+    if ckpt_enabled:
+        write_state(
+            args,
+            last_epoch,
+            phase="done",
+            latest_checkpoint=latest_checkpoint,
+            latest_preview=latest_preview,
+            resolved_caption=resolved_caption,
+        )
     print("Done!")
 
 

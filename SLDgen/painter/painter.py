@@ -11,6 +11,26 @@ from ..attraction import load_attract_points
 from .initialize import initialize_control_points
 
 
+# The pinned, never-optimized boundary geometry each mode carries. Named here so
+# checkpointing stays in step with get_polyline_2d's concatenations.
+PINNED_NONE = "none"
+PINNED_ORIGIN = "origin"
+PINNED_FIXED_ENDPOINTS = "fixed_endpoints"
+
+PINNED_TENSORS = {
+    PINNED_NONE: (),
+    PINNED_ORIGIN: ("first_origin_points", "first_origin_weights", "first_origin_widths"),
+    PINNED_FIXED_ENDPOINTS: (
+        "first2points",
+        "first2weights",
+        "first2widths",
+        "last2points",
+        "last2weights",
+        "last2widths",
+    ),
+}
+
+
 def safe_divide(numerator: torch.Tensor, denominator: float) -> torch.Tensor:
     """Safely divide, returning zeros if denominator is 0."""
     if denominator != 0:
@@ -245,6 +265,17 @@ class SLDBSplinePainter(torch.nn.Module):
                 torch.ones(len(control_points), dtype=torch.float32).contiguous().to(self.device)
             )
 
+        self._init_shape_groups_and_constraints()
+
+        return self.get_image()
+
+    def _init_shape_groups_and_constraints(self):
+        """The non-geometry half of initialization, shared with init_from_checkpoint.
+
+        Everything here is derived from the arguments and from external SVG files
+        rather than from the optimization state, so it is rebuilt on resume instead
+        of being stored in the checkpoint.
+        """
         # Create shape group with black stroke
         stroke_color = torch.tensor([0.0, 0.0, 0.0, 1.0])
         path_group = pydiffvg.ShapeGroup(
@@ -291,6 +322,70 @@ class SLDBSplinePainter(torch.nn.Module):
                     flush=True,
                 )
 
+    def pinned_kind(self):
+        """Which set of non-optimized boundary tensors this run carries."""
+        if self.args.fixed_endpoints:
+            return PINNED_FIXED_ENDPOINTS
+        if getattr(self.args, "origin", None) is not None:
+            return PINNED_ORIGIN
+        return PINNED_NONE
+
+    def state_dict(self):
+        """Serializable optimization state, on CPU.
+
+        ``is_active_cp`` is saved rather than re-derived because pruning is
+        monotone -- a control point that fell below the weight threshold never
+        reactivates, even if its weight later rises -- so it is genuine state.
+
+        The pinned tensors are saved because they come out of the TSP tour, and
+        recomputing them would mean re-running Concorde and hoping for the same
+        answer.
+        """
+
+        def cpu(tensor):
+            return tensor.detach().cpu().clone()
+
+        kind = self.pinned_kind()
+        return {
+            "control_points": cpu(self.control_points),
+            "weights": cpu(self.weights),
+            "width": cpu(self.width),
+            "is_active_cp": cpu(self.is_active_cp),
+            "pinned_kind": kind,
+            "pinned": {name: cpu(getattr(self, name)) for name in PINNED_TENSORS[kind]},
+        }
+
+    def load_state_dict(self, state):
+        """Restore what :meth:`state_dict` saved onto this painter's device."""
+        kind = state["pinned_kind"]
+        if kind != self.pinned_kind():
+            raise ValueError(
+                f"checkpoint holds '{kind}' boundary geometry but this run is "
+                f"configured for '{self.pinned_kind()}'."
+            )
+
+        def to_device(tensor):
+            return tensor.detach().clone().to(self.device)
+
+        self.control_points = to_device(state["control_points"]).contiguous()
+        self.weights = to_device(state["weights"])
+        self.width = to_device(state["width"])
+        self.is_active_cp = to_device(state["is_active_cp"])
+        for name in PINNED_TENSORS[kind]:
+            setattr(self, name, to_device(state["pinned"][name]).contiguous())
+
+    def init_from_checkpoint(self, checkpoint):
+        """Resume-time counterpart of :meth:`init_image`.
+
+        Restores the geometry instead of generating it (no stippling, no TSP, no
+        Concorde), then performs the same non-geometry setup, and returns the
+        first rendered image exactly as ``init_image`` does.
+        """
+        canvas = checkpoint.get("canvas")
+        if canvas:
+            self.canvas_width, self.canvas_height = canvas["width"], canvas["height"]
+        self.load_state_dict(checkpoint)
+        self._init_shape_groups_and_constraints()
         return self.get_image()
 
     @property
