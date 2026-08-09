@@ -4,3 +4,12 @@ fab3dwire/
 co031219.tar
 concorde/
 diffvg/
+
+# All service-generated data: jobs, checkpoints, uploads, the SQLite database.
+# Safe to delete wholesale; the service recreates it empty on next start.
+# CAUTION: `git clean -xdf` in this repo destroys every job. See docs spec 2 §3.
+work/
+
+# The API's lightweight venv (fastapi/uvicorn, no torch). Recreate with:
+#   python -m venv .venv-service && .venv-service/bin/pip install -r requirements-service.txt
+.venv-service/

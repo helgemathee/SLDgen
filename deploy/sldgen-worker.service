@@ -1,0 +1,44 @@
+# /etc/systemd/system/sldgen-worker.service   (Spec 2 §14)
+#
+# NOT installed by this repository. Copy it into place and enable it:
+#   sudo cp deploy/sldgen-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now sldgen-worker
+#
+# The conda env is entered by calling its interpreter directly, never by
+# `conda activate` in a shell wrapper. That means the variables
+# `conda env config vars set` would normally supply are NOT applied, so they are
+# declared explicitly below. This is the classic confusing failure: a missing
+# CONCORDE_PATH makes TSP initialisation fail several seconds into every job
+# with an unhelpful error.
+
+[Unit]
+Description=SLDgen GPU worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helge
+WorkingDirectory=/home/helge/SLDgen
+
+Environment=SLDGEN_WORK_ROOT=/home/helge/SLDgen/work
+Environment=PYTHONPATH=/home/helge/SLDgen
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+Environment=CONCORDE_PATH=/home/helge/src/concorde/TSP/concorde
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=TQDM_MININTERVAL=1.0
+
+ExecStart=/home/helge/miniforge3/envs/sldgen/bin/python -m sldgen_worker
+
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+
+# Must exceed the worker's own child grace period (SLDGEN_GRACE_SECONDS,
+# default 120s), or systemd will SIGKILL the worker before it can shepherd the
+# running segment to a checkpoint -- losing exactly the GPU time this is meant
+# to protect.
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

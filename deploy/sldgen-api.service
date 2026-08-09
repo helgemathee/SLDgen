@@ -1,0 +1,42 @@
+# /etc/systemd/system/sldgen-api.service   (Spec 2 §14)
+#
+# NOT installed by this repository. Copy it into place and enable it:
+#   sudo cp deploy/sldgen-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now sldgen-api
+#
+# Runs in the lightweight venv, not the conda env: no torch, so it starts in
+# well under a second and can be restarted as often as you like while building
+# the UI without disturbing a running job.
+#
+# SLDGEN_API_HOST must be the tailnet address. The service has no
+# authentication by design, so the bind address IS the access control --
+# `python -m sldgen_api` refuses to start on 0.0.0.0.
+#
+# Both units must agree on SLDGEN_WORK_ROOT; it is declared in each rather than
+# defaulted independently.
+
+[Unit]
+Description=SLDgen HTTP API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helge
+WorkingDirectory=/home/helge/SLDgen
+
+Environment=SLDGEN_WORK_ROOT=/home/helge/SLDgen/work
+Environment=PYTHONPATH=/home/helge/SLDgen
+Environment=SLDGEN_API_HOST=127.0.0.1
+Environment=SLDGEN_API_PORT=8765
+
+ExecStart=/home/helge/SLDgen/.venv-service/bin/python -m sldgen_api
+
+Restart=always
+RestartSec=2
+
+# GET /api/logs/worker shells out to journalctl, which needs this group.
+SupplementaryGroups=systemd-journal
+
+[Install]
+WantedBy=multi-user.target

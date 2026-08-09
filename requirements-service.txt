@@ -1,0 +1,19 @@
+# Dependencies for the sldgen-api process ONLY (Spec 2 §1).
+#
+# Deliberately lightweight: no torch, no diffusers, no pydiffvg. Importing those
+# alongside FastAPI costs tens of seconds of start-up and holds CUDA context
+# memory the API never uses, and the API must be restartable in under a second.
+#
+# The worker (sldgen-worker) needs none of this -- it runs in the `sldgen` conda
+# env and imports only the standard library plus sldgen_service.
+#
+#   python -m venv .venv-service
+#   .venv-service/bin/pip install -r requirements-service.txt
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2
+python-multipart>=0.0.9
+
+# Used by the service tests (test_service_e2e.py drives the live API over HTTP).
+httpx>=0.27

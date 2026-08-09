@@ -6,8 +6,13 @@ interface to SLDgen. Written to be implemented in order.
 | Spec | Scope | Depends on | Status |
 |---|---|---|---|
 | [1 — Core checkpointing](sldgen-spec-1-core.md) | `--stop-at`, `--resume`, `--checkpoint-interval`, non-destructive finalisation | nothing | ✅ complete (`4d30690`, 2026-08-09) |
-| [2 — Worker and service](sldgen-spec-2-worker.md) | job queue daemon, SQLite store, HTTP API | Spec 1 | not started |
+| [2 — Worker and service](sldgen-spec-2-worker.md) | job queue daemon, SQLite store, HTTP API | Spec 1 | ✅ complete (2026-08-09) |
 | [3 — Web UI](sldgen-spec-3-web-ui.md) | browser application | Spec 2 | not started |
+
+Each completed spec ends with an **"As built"** section: what shipped, every
+place the implementation departed from the design and why, and what was
+deliberately left undone. Read that section before the body — where the two
+disagree, it is the authority.
 
 ## Implementation order
 
@@ -20,9 +25,28 @@ departed from the design, including the one place those amendments had to be
 gated to keep the core strictly opt-in.)*
 
 Spec 2's schema is stable and can be built alongside, but cannot be completed
-until the core lands. The core has landed, so Spec 2 is unblocked; per Spec 1
-§11 its first version should shell out to the CLI rather than take on the
-resident-worker refactor.
+until the core lands. Both have landed, so Spec 3 is unblocked. Spec 1 §11's
+recommendation was followed: the worker shells out to the CLI, one segment per
+process, and the resident-worker refactor was not attempted — it should not be,
+until a real workload shows the reload cost actually hurts.
+
+## Running the service
+
+```bash
+python -m venv .venv-service
+.venv-service/bin/pip install -r requirements-service.txt
+
+SLDGEN_WORK_ROOT=$PWD/work PYTHONPATH=$PWD \
+  /home/helge/miniforge3/envs/sldgen/bin/python -m sldgen_worker &
+SLDGEN_WORK_ROOT=$PWD/work PYTHONPATH=$PWD \
+  .venv-service/bin/python -m sldgen_api &
+
+curl -s http://127.0.0.1:8765/api/health
+```
+
+`deploy/README.md` covers the systemd units (shipped, not installed), every
+configuration variable, and the operating notes — including the one about
+`git clean -xdf` destroying `work/`.
 
 ## Acceptance test for Spec 1
 
@@ -34,6 +58,20 @@ else.
 **Holds.** `test_resume_geom.py` asserts it on exact tensor equality, and
 `test_run_segments.py` asserts the black-box form of it: an uninterrupted run and
 a stopped-then-resumed run produce a byte-identical `final_sld.svg`.
+
+## Tests
+
+| File | Needs | What it proves |
+|---|---|---|
+| `test_resume_geom.py` | conda `sldgen` | the Spec 1 §8 invariant, on the real painter and optimiser |
+| `test_run_segments.py` | conda `sldgen` | `run()` end to end, diffusion stubbed: segmented == uninterrupted |
+| `test_checkpoint_ops.py` | conda `sldgen` | validation, `state.json`, exit codes, SIGTERM, pure finalisation |
+| `test_service_units.py` | `.venv-service` | params, the state machine, the input DAG, logs, disk |
+| `test_service_e2e.py` | `.venv-service` | a **live** API and worker: the whole job lifecycle, with SLDgen stubbed |
+| `test_service_partitions.py` | both | the real `sld_partition.py`, all six strategies, driven by the API |
+
+None of them needs a GPU. The service tests boot real daemons against a
+throwaway root; the only thing ever stubbed is SLDgen itself.
 
 ## The one idea to preserve
 

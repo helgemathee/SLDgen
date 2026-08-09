@@ -1,9 +1,15 @@
 # Spec 2 — Worker daemon, job store, and API contract
 
-**Status:** draft for review
+**Status:** ✅ **complete** — implemented and tested against live daemons
+(2026-08-09). Spec 1's amendments in §2 shipped with Spec 1.
 **Depends on:** Spec 1 (SLDgen core checkpointing), including the amendments in §2.
 **Scope:** everything server-side. No browser code — that is Spec 3.
 **Target host:** `fractal` (Threadripper, RTX 5090 32 GB, Ubuntu Server), reached over Tailscale.
+
+> The body below is the design as written. §17 records what was actually built,
+> where it departed from this text and why, and what is deliberately not done —
+> notably that the systemd units are shipped but **not installed**, and that the
+> service has never yet run a real GPU job. §16's open questions remain open.
 
 ---
 
@@ -697,3 +703,132 @@ the special case.
 4. **Remote access.** The API binds to the tailnet. Confirm that Postlab's
    GL.iNet subnet routing gives you the path you expect from the MacBook, or
    whether the API should also bind to the rack subnet.
+
+*(All three are still open. Nothing in the implementation forecloses any of
+them.)*
+
+---
+
+## 17. As built
+
+### Files
+
+| Path | Contents |
+|---|---|
+| `sldgen_service/` | **shared library** — config/layout, SQLite schema, store + state machine, ULIDs, the CLI translator, log reading, disk accounting, job materialisation |
+| `sldgen_worker/` | `worker.py` (loop, supervision, recovery, classification), `__main__.py` |
+| `sldgen_api/` | `app.py` (every §12 endpoint), `partitions.py`, `streaming.py`, `__main__.py` |
+| `deploy/` | both systemd units and an install/operations README |
+| `requirements-service.txt` | fastapi, uvicorn, pydantic, python-multipart, httpx — no torch |
+| `test_service_units.py`, `test_service_e2e.py`, `test_service_partitions.py` | 232 checks |
+
+### Departures from the design above
+
+1. **A third package, `sldgen_service/`.** §14's layout lists only
+   `sldgen_worker/` and `sldgen_api/`, but they necessarily share the schema,
+   the filesystem layout, the CLI translator and the log reader. Duplicating any
+   of those would let the two units disagree about the contract they communicate
+   through. The shared package imports neither fastapi nor torch, so both envs
+   can load it.
+
+2. **The API applies state transitions for jobs that are not running.** §5 says
+   the API only ever writes `desired_state` — but then pausing a *queued* job
+   would leave it queued-but-unclaimable with nothing to explain why, and
+   resuming would be impossible while the worker is stopped. The API may
+   transition a job in `queued`/`waiting`/`paused`/`complete`/`failed`, which is
+   exactly the set where no worker can hold it; for a `running` job it still only
+   asks. §10 already granted the API this power for deletion.
+
+3. **The worker never imports torch.** §8 says to read `checkpoints/latest.pt`
+   to recover `current_epoch`. Loading it would cost seconds of start-up and
+   hundreds of megabytes to learn a number that is already in the checkpoint
+   *filename*, so the worker parses `ckpt_NNNNN.pt` instead. `latest.pt` is still
+   what gets passed to `--resume`.
+
+4. **`current_epoch` means two slightly different things, on purpose.** While a
+   segment runs it mirrors `state.json`, as §4.1 specifies. When a segment ends
+   it is set to the last *checkpoint* epoch — the position a resume would
+   actually start from. Those differ when a segment dies between checkpoints, and
+   reporting the heartbeat's epoch there would overstate how much work survived.
+
+5. **`settings` is a key/value table**, not the "single-row key/value" of §4.6,
+   which is self-contradictory. Same four keys.
+
+6. **Two schema additions.** `jobs.disk_bytes` (required by §10's caching rule)
+   and `segments.error_class`, so a segment row explains itself without joining
+   back to the job — which matters once a job has been retried.
+
+7. **Input paths live in `params`, populated from `job_inputs` at creation.**
+   §4.2 lists `avoid`/`attract` as structural parameters and §4.3 stores the
+   copies, so the parameters carry the root-relative paths of the copies. A
+   caller that sets them directly is rejected, because that would bypass both the
+   copy and the provenance record.
+
+8. **Parameters are canonical, not sparse.** §4.2 says "null means flag
+   omitted"; that still holds for genuinely optional flags, but every other
+   parameter is filled with its default and always emitted. The recorded command
+   therefore still reproduces the job after an upstream default changes, and the
+   `argv_to_params(params_to_argv(p)) == p` contract is exact rather than "exact
+   up to defaults".
+
+9. **`checkpoint_interval` defaults to 200, not SLDgen's 0** — §8's own
+   recommendation, applied as the service default so a crash never costs more
+   than 200 iterations.
+
+10. **Exit code 143** (Spec 1's second-SIGTERM abort) is classified as
+    `interrupted` rather than `unknown`, since it is by definition a stop we
+    asked for.
+
+11. **An adopted segment has no exit code.** §8 step 4 says to adopt a segment
+    that outlived its worker, but a process that is not our child cannot be
+    reaped. The worker polls it to completion and takes the outcome from where
+    the checkpoints ended up — the same thing the next segment would use — and
+    records `exit_code = NULL` to mark it as adopted.
+
+12. **`python -m sldgen_api` refuses to bind `0.0.0.0`.** §12 says "never
+    `0.0.0.0`"; since the bind address is the only access control, that is
+    enforced rather than documented.
+
+### A bug this work found and fixed
+
+ULIDs minted inside the same millisecond sorted randomly, and the queue breaks
+`created_at` ties (second resolution) with the id. A batch of variants submitted
+by `run-again` could therefore run out of submission order. `new_ulid` now
+implements the standard monotonic rule — increment the random component within a
+millisecond rather than redrawing it — and a test asserts a 200-id burst is
+ordered.
+
+### Tests
+
+All three run locally with no GPU. The e2e boots **real daemons**: `python -m
+sldgen_api` under uvicorn and `python -m sldgen_worker` with its real flock and
+supervision loop, talking only through SQLite and the filesystem. The only thing
+stubbed anywhere is SLDgen itself (`test_support/fake_sldgen.py`), which honours
+the run-directory layout, `state.json`, checkpoints, `--resume`, graceful
+SIGTERM and the exit codes.
+
+| File | Checks | Covers |
+|---|---|---|
+| `test_service_units.py` | 76 | params round-trip and validation, structural/operational split, queue ordering, the state machine, inputs-are-copied, the coordinate-space guard, run-again, log cooking and byte ranges, disk and retention, settings |
+| `test_service_e2e.py` | 131 | live API + worker: uploads, preview→promote, per-segment logs, artifacts/zip/command, PATCH rules, FIFO and priority, pause mid-segment and resume from checkpoint, the failure taxonomy and retry, run-again batches, deleting idle *and* running jobs, SSE, API restart under load, graceful worker shutdown, crash recovery, orphan adoption, disk and prune, worker singleton |
+| `test_service_partitions.py` | 25 | the real `sld_partition.py` via the conda interpreter: all six strategies, preview overwrite-in-place, commit, zip, and a partition feeding the next job's `--attract`/`--avoid` |
+
+Run them:
+
+```bash
+PYTHONPATH=. .venv-service/bin/python test_service_units.py
+PYTHONPATH=. .venv-service/bin/python test_service_e2e.py
+PYTHONPATH=. .venv-service/bin/python test_service_partitions.py
+```
+
+### Not done
+
+- **The systemd units are shipped, not installed.** `deploy/*.service` are ready
+  to copy into `/etc/systemd/system/`; installing them needs root and changes the
+  machine, so it is left as an explicit operator step (see `deploy/README.md`).
+- **The service has never run a real GPU job.** Every test drives the stub. The
+  first real run is also the first test of `SLDGEN_PYTHON`, `CONCORDE_PATH` and
+  gated-model access as the units declare them.
+- **`GET /api/logs/worker`** needs journalctl and the `systemd-journal` group; it
+  returns an explanatory message rather than failing when either is missing.
+- **§16's open questions** are untouched, and Spec 3 (the web UI) is not started.
