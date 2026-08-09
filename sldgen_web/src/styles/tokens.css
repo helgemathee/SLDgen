@@ -1,0 +1,86 @@
+/* Spec 3 SS3. The one rule that governs everything here:
+ *
+ *   Colour is reserved entirely for machine state.
+ *
+ * No decorative colour anywhere -- not in headers, not in buttons, not in the
+ * logo. The only saturated pixels in the application indicate what the queue is
+ * doing. In a UI whose content is monochrome line art, any decorative colour
+ * competes with the work; a status colour that appears nowhere else is legible
+ * from across the room. Primary actions get weight and position, not hue.
+ *
+ * The single deliberate exception is the partition preview (SS12), where the
+ * colours *are* the partition identity and are therefore functional. */
+
+:root {
+  --paper: #fbfaf7;
+  --ink: #14140f;
+  --graphite: #6b6a63;
+  --rule: #dddbd3;
+  --slate: #2e3138;
+
+  /* Derived neutrals. Kept few on purpose: every extra grey is a decision
+   * someone later has to reproduce by eye. */
+  --paper-sunk: #f4f2ec;
+  --paper-raised: #ffffff;
+  --slate-light: #414651;
+  --rule-strong: #c3c0b5;
+
+  /* State colours -- used ONLY for job state, nowhere else.
+   * --st-waiting gets the most assertive hue on purpose: "reached its budget
+   * and is waiting for you" is the state the whole workflow pivots on, and it
+   * must never read as a passive intermediate. */
+  --st-queued: #8a8f98;
+  --st-running: #c2410c;
+  --st-waiting: #4f46e5;
+  --st-complete: #15803d;
+  --st-failed: #b91c1c;
+  --st-deleting: var(--graphite);
+
+  --font-ui: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* 11 / 13 / 15 / 19 / 27, tight leading. */
+  --t-xs: 11px;
+  --t-sm: 13px;
+  --t-md: 15px;
+  --t-lg: 19px;
+  --t-xl: 27px;
+
+  --header-h: 48px;
+  --status-h: 32px;
+  --rail-w: 280px;
+
+  --gap: 12px;
+  --gap-sm: 8px;
+  --gap-lg: 20px;
+}
+
+/* Every number that came from the machine is monospaced; every word written for
+ * a human is not. The distinction is informational, not decorative -- you can
+ * tell at a glance what is a measurement. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Section labels and eyebrows. Archivo's width axis gives structure without
+ * rules or boxes, which is why there are so few of either in this interface. */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-variation-settings: 'wdth' 125;
+  font-weight: 600;
+  font-size: var(--t-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--graphite);
+}
+
+.state-queued { color: var(--st-queued); }
+.state-running { color: var(--st-running); }
+.state-waiting { color: var(--st-waiting); }
+.state-paused { color: var(--st-queued); }
+.state-complete { color: var(--st-complete); }
+.state-failed { color: var(--st-failed); }
+.state-deleting { color: var(--st-deleting); }

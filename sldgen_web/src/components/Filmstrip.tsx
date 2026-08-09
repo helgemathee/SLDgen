@@ -1,0 +1,154 @@
+import { useEffect, useRef } from 'react'
+import type { FramesResponse } from '../api/types'
+
+/**
+ * The contact sheet (Spec 3 SS3, SS6.2) — the signature element.
+ *
+ * The iteration history as a horizontal strip of the actual frames: the drawing
+ * emerging from noise into structure, scrubbable. It is the most characteristic
+ * thing this system produces and it is also exactly the tool needed for the
+ * problem that a job takes twenty minutes and the interesting result is often
+ * not the final one.
+ *
+ * The mp4 is offered as a download but is deliberately not the scrubbing
+ * mechanism: frames seek instantly and video does not.
+ */
+export function Filmstrip({
+  frames,
+  index,
+  onIndex,
+  playing,
+  onPlaying,
+}: {
+  frames: FramesResponse
+  index: number
+  onIndex: (index: number) => void
+  playing: boolean
+  onPlaying: (playing: boolean) => void
+}) {
+  const track = useRef<HTMLDivElement>(null)
+  const count = frames.frames.length
+  const current = frames.frames[index]
+
+  // 10 fps, matching the mp4, so the two show the same motion.
+  useEffect(() => {
+    if (!playing || count === 0) return
+    const timer = setInterval(() => {
+      onIndex(index + 1 >= count ? 0 : index + 1)
+    }, 100)
+    return () => clearInterval(timer)
+  }, [playing, index, count, onIndex])
+
+  // Keep the selected frame in view while scrubbing or playing.
+  useEffect(() => {
+    const element = track.current?.children[index] as HTMLElement | undefined
+    element?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [index])
+
+  if (count === 0) {
+    return (
+      <div className="panel">
+        <div className="panel__head">
+          <span className="eyebrow">History</span>
+        </div>
+        <div className="panel__body note">
+          No frames yet. They appear every {frames.save_interval ?? '—'} iterations once the job
+          starts.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel__head">
+        <span className="eyebrow">History · contact sheet</span>
+        <span className="mono">
+          {index + 1}/{count} · epoch {current?.epoch}
+        </span>
+        {frames.video_url && (
+          <a className="btn btn--small" href={frames.video_url} download>
+            mp4
+          </a>
+        )}
+      </div>
+
+      <div className="filmstrip__track" ref={track}>
+        {frames.frames.map((frame, position) => (
+          <figure
+            key={frame.epoch}
+            className="filmstrip__frame"
+            aria-current={position === index}
+            onClick={() => {
+              onPlaying(false)
+              onIndex(position)
+            }}
+            role="button"
+            tabIndex={-1}
+          >
+            <img src={frame.png_url} alt={`epoch ${frame.epoch}`} loading="lazy" />
+            <figcaption>{frame.epoch}</figcaption>
+          </figure>
+        ))}
+      </div>
+
+      <div className="filmstrip__controls">
+        <button
+          type="button"
+          className="btn btn--small"
+          onClick={() => onPlaying(!playing)}
+          aria-pressed={playing}
+        >
+          {playing ? 'Pause' : 'Play'}
+        </button>
+        <input
+          className="filmstrip__slider"
+          type="range"
+          min={0}
+          max={count - 1}
+          step={1}
+          value={index}
+          aria-label="Frame"
+          onChange={(event) => {
+            onPlaying(false)
+            onIndex(Number(event.target.value))
+          }}
+        />
+        <span className="mono">epoch {current?.epoch}</span>
+        {current?.svg_url && (
+          <>
+            <a
+              className="btn btn--small"
+              href={current.svg_url}
+              target="_blank"
+              rel="noreferrer"
+              title="Open this frame's SVG"
+            >
+              svg
+            </a>
+            <a className="btn btn--small" href={current.svg_url} download>
+              ↓
+            </a>
+          </>
+        )}
+      </div>
+
+      <div className="panel__body" style={{ paddingTop: 0, display: 'grid', gap: 6 }}>
+        <p className="note" style={{ margin: 0 }}>
+          Frames exist only every {frames.save_interval ?? '—'} iterations, so this slider steps
+          rather than sliding.
+        </p>
+        {frames.rescaled && (
+          <p className="warn" style={{ margin: 0 }}>
+            <strong>These intermediates are in a different coordinate space.</strong> This job
+            rescaled its object, and intermediate SVGs are written before that rescale runs — so
+            they do not register with <span className="mono">final_sld.svg</span>. They can be
+            viewed and downloaded, but only the final SVG may be used as an avoid, attract or init
+            source, or as a partition source. The API refuses the others rather than misregistering
+            them silently.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -13,3 +13,8 @@ work/
 # The API's lightweight venv (fastapi/uvicorn, no torch). Recreate with:
 #   python -m venv .venv-service && .venv-service/bin/pip install -r requirements-service.txt
 .venv-service/
+
+# The web UI's dependencies and build output. `./start.sh` rebuilds dist/ when
+# the sources are newer, so the built copy is never worth committing.
+sldgen_web/node_modules/
+sldgen_web/dist/

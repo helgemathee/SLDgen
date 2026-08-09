@@ -142,7 +142,11 @@ def main():
                 latest_checkpoint=None, latest_preview=None)
 
     if start_epoch < 0:
+        # save_current_step writes the SVG *and* the PNG, at epoch 0 as at every
+        # save interval. Writing only the PNG here would make frame 0 look like
+        # it had no SVG, which is not something the real run ever produces.
         (run_dir / "svg_to_png" / "iter_0000.png").write_bytes(b"\x89PNG\r\n\x1a\n(frame 0)")
+        (run_dir / "svg_logs" / "svg_iter0.svg").write_text("<svg/>")
         (run_dir / "config.json").write_text(json.dumps({"num_iter": args.num_iter}, indent=4))
 
     latest_preview = "svg_to_png/iter_0000.png"

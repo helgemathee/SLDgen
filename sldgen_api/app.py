@@ -257,13 +257,29 @@ def create_app(config=None):
     def list_jobs(
         state: str = Query(None),
         batch_id: str = Query(None),
+        parent_job_id: str = Query(None),
+        with_params: bool = Query(False),
         limit: int = Query(100, ge=1, le=1000),
         cursor: str = Query(None),
     ):
+        """The rail's query. ``with_params`` is opt-in because the rail does not
+        need it and it roughly triples the payload; the variant table (Spec 3
+        SS6.6) does need it, to flag a seed that would duplicate an existing run.
+        """
         states = state.split(",") if state else None
-        rows = store.list_jobs(state=states, batch_id=batch_id, limit=limit, cursor=cursor)
+        rows = store.list_jobs(
+            state=states,
+            batch_id=batch_id,
+            parent_job_id=parent_job_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        summaries = [job_summary(job) for job in rows]
+        if with_params:
+            for summary, job in zip(summaries, rows):
+                summary["params"] = job["params"]
         return {
-            "jobs": [job_summary(job) for job in rows],
+            "jobs": summaries,
             "next_cursor": rows[-1]["id"] if len(rows) == limit else None,
         }
 
@@ -438,6 +454,97 @@ def create_app(config=None):
             raise HTTPException(404, "job has no preview yet")
         return FileResponse(frames[-1])
 
+    @app.get("/api/jobs/{job_id}/frames")
+    def list_frames(job_id: str):
+        """The contact sheet (Spec 3 SS6.2): every saved frame, with its SVG.
+
+        Two things the UI must say out loud are decided here rather than in the
+        browser, because both depend on files the browser cannot see:
+
+        ``rescaled`` -- ``increase_object_size`` runs only on the final export, so
+        when ``--object-size-ratio`` actually rescaled the object, everything in
+        ``svg_logs/`` is in a different coordinate space than ``final_sld.svg``.
+        The UI greys out "use this frame as an avoid/attract/init source" when
+        this is true; the API refuses it outright (``jobs._guard_coordinate_space``).
+
+        ``save_interval`` -- frames exist only at that granularity, so the
+        scrubber is stepwise and should not pretend otherwise.
+        """
+        job = require_job(job_id)
+        run_dir = config.run_dir(job_id)
+        frames = []
+        for path in sorted((run_dir / "svg_to_png").glob("iter_*.png")):
+            try:
+                epoch = int(path.stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            # run.py writes the PNG zero-padded and the SVG unpadded.
+            svg = run_dir / "svg_logs" / f"svg_iter{epoch}.svg"
+            frames.append(
+                {
+                    "epoch": epoch,
+                    "png": f"target/run/svg_to_png/{path.name}",
+                    "png_url": f"/api/jobs/{job_id}/files/target/run/svg_to_png/{path.name}",
+                    "svg": f"target/run/svg_logs/{svg.name}" if svg.exists() else None,
+                    "svg_url": (
+                        f"/api/jobs/{job_id}/files/target/run/svg_logs/{svg.name}"
+                        if svg.exists()
+                        else None
+                    ),
+                    "bytes": path.stat().st_size,
+                }
+            )
+
+        rescaled = False
+        config_path = run_dir / "config.json"
+        if config_path.exists():
+            try:
+                recorded = json.loads(config_path.read_text())
+                rescaled = any(
+                    recorded.get(key) not in (None, "None") for key in ("scale_w", "scale_h")
+                )
+            except (OSError, ValueError):
+                rescaled = False
+
+        final_svg = run_dir / "final_sld.svg"
+        return {
+            "job_id": job_id,
+            "frames": frames,
+            "save_interval": job["params"].get("save_interval"),
+            "rescaled": rescaled,
+            "final_svg_url": (
+                f"/api/jobs/{job_id}/files/target/run/final_sld.svg" if final_svg.exists() else None
+            ),
+            "video_url": (
+                f"/api/jobs/{job_id}/files/target/run/sketch.mp4"
+                if (run_dir / "sketch.mp4").exists()
+                else None
+            ),
+        }
+
+    @app.get("/api/jobs/{job_id}/lineage")
+    def get_lineage(job_id: str):
+        """Where a job came from and what came out of it (Spec 3 SS6.5)."""
+        job = require_job(job_id)
+        parent = store.get_job(job["parent_job_id"]) if job["parent_job_id"] else None
+        variants = store.list_jobs(parent_job_id=job_id, limit=1000)
+        siblings = (
+            [
+                sibling
+                for sibling in store.list_jobs(batch_id=job["batch_id"], limit=1000)
+                if sibling["id"] != job_id
+            ]
+            if job["batch_id"]
+            else []
+        )
+        return {
+            "id": job_id,
+            "parent": job_summary(parent) if parent else None,
+            "variants": [job_summary(child) for child in variants],
+            "batch_id": job["batch_id"],
+            "batch_siblings": [job_summary(sibling) for sibling in siblings],
+        }
+
     @app.get("/api/jobs/{job_id}/command", response_class=PlainTextResponse)
     def get_command(job_id: str):
         return " ".join(_command_for(require_job(job_id)))
@@ -579,6 +686,73 @@ def create_app(config=None):
                 await asyncio.sleep(1.0)
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.get("/api/events")
+    async def global_events(request: Request):
+        """The rail's stream (Spec 3 SS13): one connection for the whole job list.
+
+        Sends the full summary list whenever anything in it changes, rather than
+        per-job deltas. The list is small and bounded by what the rail displays,
+        and a whole-list snapshot means a client that reconnects mid-change
+        cannot end up with a partially-applied update -- which is the failure
+        mode that makes delta streams hard to trust across the frequent API
+        restarts this service expects.
+        """
+
+        async def events():
+            last = None
+            while True:
+                if await request.is_disconnected():
+                    return
+                jobs = [job_summary(job) for job in store.list_jobs(limit=500)]
+                payload = {
+                    "jobs": jobs,
+                    "worker_alive": worker_alive(config),
+                    "queue_depth": sum(1 for job in jobs if job["state"] == store_module.QUEUED),
+                }
+                if payload != last:
+                    last = payload
+                    yield sse("jobs", payload)
+                await asyncio.sleep(1.0)
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    # -- UI parameter persistence (Spec 3 SS9) --------------------------------
+
+    @app.get("/api/params/last")
+    def get_last_params():
+        """The last-submitted form state, or null before anything was submitted.
+
+        Server-side rather than localStorage, so hard-won settings -- an origin
+        placed carefully on one image -- survive a browser change or a cache
+        clear. The payload is the UI's own shape and the service does not read it.
+        """
+        return {"params": store.get_ui_state("last_params")}
+
+    @app.put("/api/params/last")
+    def put_last_params(body: dict = Body(...)):
+        payload = body.get("params", body)
+        store.set_ui_state("last_params", payload)
+        return {"params": payload}
+
+    @app.get("/api/params/presets")
+    def get_presets():
+        return {"presets": store.list_presets()}
+
+    @app.post("/api/params/presets", status_code=201)
+    def post_preset(body: dict = Body(...)):
+        try:
+            return store.create_preset(body.get("name"), body.get("params"))
+        except StoreError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.delete("/api/params/presets/{preset_id}", status_code=204)
+    def remove_preset(preset_id: str):
+        try:
+            store.delete_preset(preset_id)
+        except StoreError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return None
 
     @app.get("/api/logs/worker", response_class=PlainTextResponse)
     def worker_log(lines: int = Query(200, ge=1, le=10000)):
@@ -757,13 +931,161 @@ def create_app(config=None):
                 )
         return {"jobs_pruned": len(pruned), "bytes_freed": freed, "detail": pruned}
 
+    @app.post("/api/maintenance/cleanup")
+    def cleanup(body: dict = Body(...)):
+        """Every cleanup action in Spec 3 SS11, behind one shape.
+
+        ``dry_run`` runs the *same* selection code and stops before acting, which
+        is what lets the UI state an exact job count and byte figure before
+        asking for confirmation. An estimate computed by a separate code path
+        would eventually drift from what the action actually does, and the
+        confirmation friction is only meaningful if the number is true.
+        """
+        action = body.get("action")
+        dry_run = bool(body.get("dry_run", True))
+        selected, freed = [], 0
+
+        def job_entry(job):
+            size = disk_utils.directory_size(config.job_dir(job["id"]))
+            return {"id": job["id"], "title": job["title"], "bytes": size}
+
+        if action == "delete_jobs":
+            ids = body.get("job_ids") or []
+            targets = [store.get_job(job_id) for job_id in ids]
+            missing = [job_id for job_id, job in zip(ids, targets) if job is None]
+            if missing:
+                raise HTTPException(404, f"no such job(s): {', '.join(missing)}")
+            selected = [job_entry(job) for job in targets]
+
+        elif action == "delete_failed":
+            selected = [
+                job_entry(job)
+                for job in store.list_jobs(state=store_module.FAILED, limit=10_000)
+            ]
+
+        elif action == "delete_completed_older_than":
+            days = float(body.get("days", 30))
+            cutoff = time.time() - days * 86400
+            for job in store.list_jobs(state=store_module.COMPLETE, limit=10_000):
+                finished = job["finished_at"]
+                if not finished:
+                    continue
+                stamp = time.mktime(time.strptime(finished, "%Y-%m-%dT%H:%M:%SZ"))
+                if stamp <= cutoff:
+                    selected.append(job_entry(job))
+
+        elif action in ("prune_checkpoints", "prune_frames"):
+            drop_frames = action == "prune_frames"
+            for job in store.list_jobs(state=store_module.COMPLETE, limit=10_000):
+                run_dir = config.run_dir(job["id"])
+                if drop_frames:
+                    if not (run_dir / "sketch.mp4").exists():
+                        continue  # never drop the only copy of the frames
+                    reclaimable = sum(
+                        path.stat().st_size
+                        for path in (run_dir / "svg_to_png").glob("iter_*.png")
+                    )
+                else:
+                    checkpoints = sorted((run_dir / "checkpoints").glob("ckpt_*.pt"))
+                    reclaimable = sum(path.stat().st_size for path in checkpoints[:-1])
+                if reclaimable:
+                    selected.append(
+                        {"id": job["id"], "title": job["title"], "bytes": reclaimable}
+                    )
+
+        elif action == "delete_orphan_uploads":
+            referenced = {job["target_sha256"] for job in store.list_jobs(limit=10_000)}
+            referenced |= {
+                row["source_sha256"]
+                for row in store.connection.execute(
+                    "SELECT source_sha256 FROM job_inputs"
+                ).fetchall()
+            }
+            for path in sorted(config.uploads_dir.glob("*")):
+                if path.is_file() and path.stem not in referenced:
+                    selected.append(
+                        {"id": path.name, "title": "upload", "bytes": path.stat().st_size}
+                    )
+
+        else:
+            raise HTTPException(400, f"unknown cleanup action: {action!r}")
+
+        freed = sum(entry["bytes"] for entry in selected)
+        result = {
+            "action": action,
+            "dry_run": dry_run,
+            "job_count": len(selected),
+            "bytes": freed,
+            "items": selected,
+        }
+        if dry_run:
+            return result
+
+        if action in ("delete_jobs", "delete_failed", "delete_completed_older_than"):
+            for entry in selected:
+                job = store.get_job(entry["id"])
+                if job is None:
+                    continue
+                job = store.request_delete(entry["id"])
+                if job["state"] == store_module.DELETING:
+                    job_files.delete_job_files(config, entry["id"])
+                    store.delete_row(entry["id"])
+                # A running job stays in `deleting` until the worker stops its
+                # segment; _reconcile_deleting finishes it afterwards.
+        elif action in ("prune_checkpoints", "prune_frames"):
+            for entry in selected:
+                job_files.prune_job(config, entry["id"], drop_frames=action == "prune_frames")
+                store.update_job(
+                    entry["id"], disk_bytes=disk_utils.directory_size(config.job_dir(entry["id"]))
+                )
+        elif action == "delete_orphan_uploads":
+            for entry in selected:
+                (config.uploads_dir / entry["id"]).unlink(missing_ok=True)
+        return result
+
     @app.get("/api/maintenance/sweep")
     def sweep():
         removed = job_files.sweep_tmp(config)
         reclaimed = _reconcile_deleting(store, config)
         return {"tmp_entries_removed": removed, "jobs_reclaimed": reclaimed}
 
+    # -- the web UI (Spec 3 SS2) ---------------------------------------------
+    #
+    # Mounted last, so every /api route above is matched first and the mount can
+    # own everything else. The UI uses a hash router, so the server never sees a
+    # client route and no catch-all rewrite is needed.
+    _mount_web(app, config)
+
     return app
+
+
+WEB_DIST = Path(__file__).resolve().parent.parent / "sldgen_web" / "dist"
+
+
+def _mount_web(app, config):
+    """Serve the built UI at ``/``, or explain how to build it.
+
+    A missing build is the normal state of a fresh checkout, and answering it
+    with FastAPI's bare 404 sends you looking for a server fault that isn't
+    there. The message names the command instead.
+    """
+    dist = Path(os.environ.get("SLDGEN_WEB_DIST", WEB_DIST))
+    if (dist / "index.html").exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
+        return
+
+    @app.get("/", response_class=PlainTextResponse)
+    def web_not_built():
+        return (
+            "The SLDgen web UI is not built.\n\n"
+            f"Expected: {dist}/index.html\n\n"
+            "Build it with:\n"
+            "    cd sldgen_web && npm install && npm run build\n\n"
+            "or run ./start.sh, which builds it when the sources are newer than "
+            "the build.\n\nThe API itself is fine: try /api/health or /api/docs.\n"
+        )
 
 
 def _reconcile_deleting(store, config):

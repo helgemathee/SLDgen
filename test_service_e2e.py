@@ -129,6 +129,14 @@ class Harness:
         except httpx.HTTPError:
             return False
 
+    def restart_api(self):
+        """Stop and start the API. Never touches a running job -- that is the
+        whole reason the two units share only SQLite and the filesystem."""
+        if self.api and self.api.poll() is None:
+            self.api.terminate()
+            self.api.wait(timeout=15)
+        self.start_api()
+
     def start_worker(self):
         self.worker = subprocess.Popen(
             [sys.executable, "-m", "sldgen_worker"],

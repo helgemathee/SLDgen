@@ -10,7 +10,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -91,6 +91,24 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Spec 3 SS9. The web UI's parameter state is stored server-side rather than in
+-- localStorage, so "the next job starts from the last job's settings" survives a
+-- browser change or a cache clear. The value is opaque JSON: it is the UI's
+-- {enabled, value} form object, not a canonical parameter set, because both
+-- halves of every optional flag must persist independently -- disabling the
+-- origin must not discard its coordinates.
+CREATE TABLE IF NOT EXISTS ui_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS presets (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  params_json TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -121,8 +139,12 @@ def initialize(path):
     connection = connect(path)
     with connection:
         connection.executescript(SCHEMA)
+        # Every version so far has been purely additive (new tables, created with
+        # IF NOT EXISTS above), so an older database is upgraded by opening it.
+        # Record the version we actually left it at rather than the one it had.
         connection.execute(
-            "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('version', ?)",
+            "INSERT INTO schema_meta(key, value) VALUES ('version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (str(SCHEMA_VERSION),),
         )
         for key, value in DEFAULT_SETTINGS.items():

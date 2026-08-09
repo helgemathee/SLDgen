@@ -1,9 +1,16 @@
 # Spec 3 — Web UI
 
-**Status:** draft for review
+**Status:** ✅ **complete** — implemented, tested, and run against a real GPU job
+(2026-08-09).
 **Depends on:** Spec 2 (API contract, job lifecycle), Spec 1 (core semantics).
 **Scope:** browser application only. Single user, no authentication, desktop-first.
 **Served by:** `sldgen-api` as a static build; `sldgen_web/` in the repo.
+
+> The body below is the design as written. §18 records what was actually built,
+> where it departed from this text and why, and what is deliberately not done.
+> §17's open questions are answered there. Along the way this work produced the
+> **first real GPU run the service has ever performed** — Spec 2 §17 listed that
+> as not done — including a segmented resume from a checkpoint.
 
 ---
 
@@ -611,3 +618,139 @@ attached.
 4. **Auto-promote rules.** A "promote automatically if it survives to N" policy
    would remove a decision point, but it also removes the review the whole
    workflow exists to enable. Not specced; noted as a temptation to resist.
+
+---
+
+## 18. As built
+
+### Files
+
+| Path | Contents |
+|---|---|
+| `sldgen_web/src/lib/` | the pure logic, all unit-tested: `lab` (Lab conversion, wand, feather, brush), `ring`, `params`, `paramdiff`, `variants`, `formstate`, `logcook`, `format`, `backoff` |
+| `sldgen_web/src/api/` | `client` (typed fetch), `types` (the wire shapes), `stream` (SSE with the polling fallback) |
+| `sldgen_web/src/components/` | `Ring`, `JobRail`, `StatusBar`, `DiskPanel`, `ArtworkPane`, `Filmstrip`, `LogViewer`, `JobData`, `ActionsPanel`, `ParamFields`, `ConstraintPicker`, `PrepCanvas`, `PartitionPanel`, `RunAgainDialog`, `HelpOverlay` |
+| `sldgen_web/src/pages/` | `JobsPage`, `JobPage`, `ComparePage`, `NewJobPage` |
+| `sldgen_web/src/styles/` | `tokens.css` (§3's palette and type), `app.css` |
+| `start.sh`, `stop.sh` | the tmux deployment, and a graceful drain |
+| `docs/RUNNING.md` | the operator's manual, written for someone who has not used tmux |
+| `test_service_web.py` | 69 checks against a live API for everything §12 gained |
+
+### Additions to the Spec 2 API
+
+The UI needed seven things Spec 2 did not have. All are additive; no existing
+endpoint changed shape.
+
+```
+GET/PUT  /api/params/last                the {enabled, value} form state (§9)
+GET/POST /api/params/presets             named presets
+DELETE   /api/params/presets/{id}
+GET      /api/jobs/{id}/frames           the contact sheet, incl. the rescale flag
+GET      /api/jobs/{id}/lineage          parent, variants, batch siblings
+GET      /api/events                     the rail's global stream
+POST     /api/maintenance/cleanup        every §11 action, with a truthful dry run
+GET      /api/jobs?parent_job_id=&with_params=
+```
+
+Schema: two additive tables, `ui_state` and `presets`, and `SCHEMA_VERSION` 2.
+`batch_id` was already there — Spec 2 built §6.6's one schema addition ahead of
+time, so nothing was needed for batches.
+
+### Departures from the design above
+
+1. **`Cancel` pauses and withdraws the budget; it does not produce `waiting`.**
+   §6.3 asks for cancel to leave the job at `waiting`, but Spec 2's state machine
+   reaches `waiting` only by *reaching* a budget, and `paused` is precisely the
+   state for "the user intervened". So cancel pauses, then pulls `target_epoch`
+   back to the epoch actually reached — which makes `Resume` refuse with "promote
+   it instead", exactly how a job that finished its budget behaves. Same meaning,
+   no new state, no change to the worker.
+
+2. **Log cooking happens in the browser, on the whole buffer.** §6.4 has the API
+   cook (Spec 2 §13.2), and it still does for whole-file reads. But the viewer
+   fetches incrementally by byte offset and a tqdm progress line routinely spans
+   a chunk boundary, so cooking each chunk in isolation and concatenating
+   produces a line no terminal would show. The viewer fetches `raw=true` and
+   cooks locally; `lib/logcook.ts` mirrors `logs.py` and the two are tested
+   against the same cases. The raw toggle became instant as a side effect.
+
+3. **The parameter schema is duplicated in TypeScript.** `lib/params.ts` mirrors
+   `PARAM_SPECS`. Fetching it instead would make the new-job form unusable until
+   a round trip completed, and the server remains the authority either way — it
+   canonicalises and validates every submission. `test_service_web.py` parses the
+   TypeScript and asserts name-for-name, default-for-default agreement, so drift
+   fails the suite rather than reaching a user.
+
+4. **`stipple_weight` cannot be picked from an existing file.** §8.3 lists it
+   among the constraint inputs, but a hand-supplied weight map has no way to
+   register with the prepared target, whose framing the canvas has just changed.
+   The picker says so and points at the density brush, which is where a weight
+   map that *does* register comes from.
+
+5. **No estimated pen travel time** (§17.3). Path length is measured with the
+   browser's own `getTotalLength`, so curves are measured rather than
+   approximated. The time estimate is dropped: it needs a speed constant nobody
+   has established, and a confidently wrong number is worse than none.
+
+6. **`with_params` is opt-in on the job list.** The variant table needs every
+   job's parameters to flag a duplicate seed; the rail does not, and including
+   them roughly triples the payload it polls.
+
+7. **The default tmux session is `sldgen-service`, not `sldgen`.** Discovered by
+   collision: `sldgen` was already in use on the host.
+
+### Answers to §17's open questions
+
+1. **Density brush vs selection — separate tools**, as specced, with the density
+   brush appearing only once a non-default mask mode is chosen. Worth revisiting
+   after real use, exactly as the spec says.
+2. **Compare has no hard cap.** A responsive grid with a 300px minimum, so the
+   cells shrink until they stop being judgeable and the layout tells you rather
+   than a rule.
+3. **Pen travel** — answered in departure 5: length only.
+4. **Auto-promote** — not built. The temptation was resisted.
+
+### What the first real GPU run found
+
+A short run (20 iterations, then promoted to 40) through the shipping stack
+produced `input.png`, `mask.png`, `condition_depth.png`, paired frames and SVGs,
+a checkpoint, and a clean resume: segment 1 ran 0→20 fresh, segment 2 ran 20→40
+from `latest.pt`, both exit 0.
+
+It also settled something the spec treated as an edge case. **`rescaled` is true
+for a default job**: `object_size_ratio` defaults to 0.75, which produced
+`scale_w 0.8`, so `svg_logs/` is in a different coordinate space than
+`final_sld.svg` on essentially *every* run. §6.2's warning is therefore not a
+rare caveat but permanent furniture, which is why it is styled as a quiet note
+rather than an alert — and why the constraint picker offers only `final_sld.svg`
+rather than trying to detect the exception.
+
+### Tests
+
+| Suite | Checks | Covers |
+|---|---|---|
+| `sldgen_web` vitest | 137 | Lab conversion against CIE reference values, flood fill (contiguous and global), feather monotonicity, brush falloff and clipping, ring geometry incl. the partially-completed case, log cooking against `logs.py`'s cases, the `{enabled, value}` persistence contract, variant seeds and duplicate detection, parameter validation, ETA and rate maths, reconnection backoff |
+| `test_service_web.py` | 69 | static serving, params/last surviving an API restart, presets, frames and the rescale flag, the API refusing a rescaled intermediate as an input, lineage and batches, the list filters, the global stream, and that cleanup's dry run reports exactly what the real run then does |
+
+Run them:
+
+```bash
+cd sldgen_web && npm test
+PYTHONPATH=. .venv-service/bin/python test_service_web.py
+```
+
+The Spec 2 suites (232 checks) still pass unchanged.
+
+### Not done
+
+- **No browser-driven end-to-end test.** The logic is unit-tested and the API is
+  integration-tested against live daemons, but nothing drives a real Chromium.
+  The prep canvas in particular is verified only through its pure functions.
+- **The prep canvas has not been used in anger.** Its export path — selection at
+  working resolution, upsampled onto the full-resolution original — is correct by
+  construction and untested against a real photograph.
+- **`GET /api/logs/worker`** still needs journalctl, so under `start.sh` (where
+  the worker is a tmux pane, not a unit) it returns its explanatory message. The
+  worker's output is in the pane; the UI links to the endpoint regardless.
+- **Reduced motion** freezes the running indicator, but the filmstrip's play
+  control is unaffected — it is user-initiated, so muting it would be wrong.

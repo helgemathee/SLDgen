@@ -106,6 +106,64 @@ class Store:
                 )
         return self.get_settings()
 
+    # -- UI state and presets (Spec 3 SS9) ----------------------------------
+
+    def get_ui_state(self, key, default=None):
+        """Opaque JSON kept on behalf of the web UI.
+
+        The service never interprets it. It is the UI's form object, in which
+        every optional parameter is ``{enabled, value}`` and both halves persist
+        independently -- switching the origin off must not discard the pin.
+        """
+        row = self.connection.execute(
+            "SELECT value FROM ui_state WHERE key = ?", (key,)
+        ).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_ui_state(self, key, value):
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT INTO ui_state(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)),
+            )
+        return value
+
+    def list_presets(self):
+        rows = self.connection.execute(
+            "SELECT * FROM presets ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "params": json.loads(row["params_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def create_preset(self, name, params):
+        name = (name or "").strip()
+        if not name:
+            raise StoreError("a preset needs a name")
+        preset_id = new_ulid()
+        with self.transaction() as connection:
+            # A name collision replaces the existing preset rather than making a
+            # second one you cannot tell apart in a dropdown.
+            connection.execute("DELETE FROM presets WHERE name = ?", (name,))
+            connection.execute(
+                "INSERT INTO presets(id, name, params_json, created_at) VALUES (?, ?, ?, ?)",
+                (preset_id, name, json.dumps(params), db.utcnow()),
+            )
+        return next(preset for preset in self.list_presets() if preset["id"] == preset_id)
+
+    def delete_preset(self, preset_id):
+        with self.transaction() as connection:
+            cursor = connection.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
+        if not cursor.rowcount:
+            raise StoreError(f"no such preset: {preset_id}")
+
     # -- jobs -------------------------------------------------------------
 
     def create_job(
@@ -162,7 +220,7 @@ class Store:
             raise StoreError(f"no such job: {job_id}")
         return job
 
-    def list_jobs(self, state=None, batch_id=None, limit=100, cursor=None):
+    def list_jobs(self, state=None, batch_id=None, parent_job_id=None, limit=100, cursor=None):
         """Newest first. ``cursor`` is the last id of the previous page.
 
         Ids are ULIDs, so "created before" is just "sorts lower", and pagination
@@ -176,6 +234,9 @@ class Store:
         if batch_id:
             clauses.append("batch_id = ?")
             args.append(batch_id)
+        if parent_job_id:
+            clauses.append("parent_job_id = ?")
+            args.append(parent_job_id)
         if cursor:
             clauses.append("id < ?")
             args.append(cursor)
