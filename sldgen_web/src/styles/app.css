@@ -347,7 +347,13 @@ a {
   display: block;
 }
 
+/* `display` is not decoration here: .row__body is a <span>, so without this its
+ * two children lay out inline -- the title and the epoch counter share one line,
+ * the counter runs under the ring, and `text-overflow: ellipsis` below never
+ * fires because it does nothing on an inline box. Grid stacks them and
+ * blockifies both children, which is what makes the truncation work. */
 .row__body {
+  display: grid;
   min-width: 0;
 }
 
@@ -513,6 +519,28 @@ a {
   display: grid;
   gap: var(--gap);
   min-width: 0;
+}
+
+/* The `min-width: 0` above protects the two columns; this protects what is
+ * inside them. A grid item's automatic minimum size is its *content's*
+ * min-content width, so the filmstrip -- a row of fixed-width frames, one per
+ * saved epoch -- reported a minimum of however many thousand pixels the run had
+ * produced and dragged the whole column out to that width, carrying the artwork
+ * pane and the Actions and Segments panels off the right-hand edge of the
+ * window with it. The frames scroll inside their own track; nothing in either
+ * column has any business being wider than the column. */
+.detail__left > *,
+.detail__right > * {
+  min-width: 0;
+}
+
+/* Below this the 340px right-hand column has eaten enough of the artwork that
+ * the drawing -- the thing the page is for -- is smaller than the panels beside
+ * it. One column, full width each, is the honest answer. */
+@media (max-width: 1180px) {
+  .detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .detail__title {
@@ -805,6 +833,13 @@ a {
   letter-spacing: -0.02em;
 }
 
+/* A number is a few characters wide and stretching its box across the panel says
+ * otherwise -- a seed of `0` sitting in a 900px field reads as an empty form.
+ * Text fields keep the full width: they hold captions and file paths. */
+.field input[type='number'] {
+  max-width: 180px;
+}
+
 .field textarea {
   font-family: var(--font-ui);
   font-size: var(--t-sm);
@@ -999,9 +1034,17 @@ a {
   place-items: center;
 }
 
+/* `max-width` alone let a tall source image render at its full working size --
+ * a 1024px square canvas in a 640px-tall viewport, so you painted a mask you
+ * could never see all of at once, and the parameters below it were pushed a
+ * screen and a half down. Constraining both axes shrinks the canvas to fit while
+ * the browser preserves its intrinsic ratio; pointer positions are read from
+ * `getBoundingClientRect` and normalised, so the display size does not affect
+ * where the paint lands. */
 .canvas-wrap canvas {
   display: block;
   max-width: 100%;
+  max-height: min(68vh, 620px);
   cursor: crosshair;
   image-rendering: pixelated;
 }
@@ -1100,18 +1143,29 @@ a {
   font-size: var(--t-sm);
 }
 
+/* One grid for the whole block, not one per row: when each row was its own
+ * `auto 1fr` grid every value started at a different x, so the column of numbers
+ * you are actually comparing between cells was ragged inside each cell. The rows
+ * are `display: contents` so their two spans join the parent grid and share its
+ * columns. */
 .deltas {
   display: grid;
-  gap: 1px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 1px 6px;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: -0.02em;
 }
 
 .deltas div {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px;
+  display: contents;
+}
+
+.deltas div > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .deltas span:first-child {
