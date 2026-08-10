@@ -3,6 +3,7 @@ import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatBytes } from '../lib/format'
 import { ZOOM_STEP, actualSizeView, fitView, zoomCentered } from '../lib/zoom'
+import { previewSrc } from './JobThumb'
 
 export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition'
 
@@ -22,7 +23,7 @@ export function availableArtwork(job: JobDetail, frameUrl: string | null): Avail
   )
   return {
     result: run('final_sld.svg'),
-    preview: frameUrl ?? (job.current_epoch > 0 ? job.preview_url : null),
+    preview: frameUrl ?? (job.current_epoch > 0 ? previewSrc(job) : null),
     input: run('input.png'),
     mask: run('mask.png'),
     condition: condition ? fileUrl(job.id, condition.path) : null,

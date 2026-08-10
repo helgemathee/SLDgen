@@ -36,6 +36,8 @@ function job(params: Record<string, ParamValue>): JobSummary {
     started_at: null,
     finished_at: null,
     preview_url: '/api/jobs/x/preview',
+    viewed_epoch: null,
+    favorite_count: 0,
     params: { ...base, ...params },
   }
 }

@@ -10,6 +10,8 @@ only what the web UI needed and what the UI depends on being true:
   * ``/api/jobs/{id}/frames``, including the coordinate-space flag the contact
     sheet must warn about (SS6.2)
   * ``/api/jobs/{id}/lineage`` and the list filters the variant table needs
+  * the marks a job carries between browsers: the frame it is parked on, the
+    starred frames, and the archive of just those (SS6.2)
   * ``/api/events``, the rail's global stream
   * ``/api/maintenance/cleanup``, whose dry run must report exactly what the
     real run then does (SS11)
@@ -24,10 +26,13 @@ Run it with the service venv:
 """
 
 import ast
+import io
 import json
 import re
+import sqlite3
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -250,6 +255,111 @@ def test_frames(harness, sha256):
     return job_id
 
 
+# -- marks: the viewed frame and the favourites -----------------------------
+
+
+def test_marks(harness, sha256):
+    """What the UI remembers about a job on your behalf (SS6.2).
+
+    The whole point of keeping these on the server is that they survive the
+    browser, so every check here is made through the API rather than against
+    anything the client holds.
+    """
+    print("\n--- marks: the parked frame, the stars, and the archive of them")
+    job = harness.create_job(sha256, target_epoch=200, num_iter=1000, title="marks")
+    job_id = job["id"]
+    check("marks/a-new-job-is-not-parked", job["viewed_epoch"] is None)
+    check("marks/a-new-job-has-no-stars", job["favorite_count"] == 0)
+
+    # Before anything has run there is still a picture: the submitted image.
+    # A queue of white squares says nothing about what is in the queue.
+    submitted = harness.client.get(f"/api/jobs/{job_id}/preview")
+    check("marks/queued-job-previews-its-input", submitted.status_code == 200,
+          str(submitted.status_code))
+    check("marks/queued-preview-is-the-uploaded-target", submitted.content == PNG)
+
+    harness.await_state(job_id, "waiting")
+    frames = harness.client.get(f"/api/jobs/{job_id}/frames").json()["frames"]
+    epochs = [frame["epoch"] for frame in frames]
+    check("marks/have-frames-to-mark", len(epochs) >= 3, str(epochs))
+    parked, other = epochs[1], epochs[2]
+
+    newest = harness.client.get(f"/api/jobs/{job_id}/preview").content
+
+    # -- the parked frame ---------------------------------------------------
+    response = harness.client.put(f"/api/jobs/{job_id}/viewed-epoch", json={"epoch": parked})
+    check("marks/park-accepted", response.status_code == 200, response.text[:120])
+    check("marks/park-echoes-the-epoch", response.json()["viewed_epoch"] == parked)
+    check("marks/park-shows-in-the-summary",
+          harness.client.get("/api/jobs").json()["jobs"][0]["viewed_epoch"] == parked)
+
+    frame_bytes = harness.client.get(
+        f"/api/jobs/{job_id}/files/target/run/svg_to_png/iter_{parked:04d}.png"
+    ).content
+    parked_preview = harness.client.get(f"/api/jobs/{job_id}/preview")
+    check("marks/thumbnail-follows-the-parked-frame",
+          parked_preview.content == frame_bytes and frame_bytes != newest)
+
+    harness.client.put(f"/api/jobs/{job_id}/viewed-epoch", json={"epoch": None})
+    check("marks/unpark-clears-it",
+          harness.job(job_id)["viewed_epoch"] is None)
+    check("marks/unparked-thumbnail-is-newest-again",
+          harness.client.get(f"/api/jobs/{job_id}/preview").content == newest)
+    check("marks/park-rejects-nonsense",
+          harness.client.put(
+              f"/api/jobs/{job_id}/viewed-epoch", json={"epoch": "soon"}
+          ).status_code == 400)
+
+    # -- the stars ----------------------------------------------------------
+    starred = harness.client.put(f"/api/jobs/{job_id}/favorites/{parked}")
+    check("marks/star-accepted", starred.status_code == 200, starred.text[:120])
+    harness.client.put(f"/api/jobs/{job_id}/favorites/{other}")
+    again = harness.client.put(f"/api/jobs/{job_id}/favorites/{parked}")
+    listed = [favorite["epoch"] for favorite in again.json()["favorites"]]
+    check("marks/starring-twice-marks-once", listed == sorted({parked, other}), str(listed))
+    check("marks/stars-carry-their-svg",
+          all(favorite["svg_url"] for favorite in again.json()["favorites"]))
+    check("marks/star-count-in-the-summary",
+          harness.job(job_id)["favorite_count"] == 2)
+    check("marks/star-epochs-in-the-detail",
+          harness.job(job_id)["favorite_epochs"] == sorted({parked, other}))
+    check("marks/cannot-star-a-frame-that-does-not-exist",
+          harness.client.put(f"/api/jobs/{job_id}/favorites/999999").status_code == 404)
+
+    archive = harness.client.get(f"/api/jobs/{job_id}/favorites.zip")
+    check("marks/archive-served", archive.status_code == 200, str(archive.status_code))
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as bundle:
+        names = sorted(bundle.namelist())
+        check("marks/archive-holds-only-the-starred-svgs",
+              names == sorted(f"{job_id}/epoch_{epoch:04d}.svg" for epoch in (parked, other)),
+              str(names))
+        source = (harness.root / "jobs" / job_id / "target" / "run"
+                  / "svg_logs" / f"svg_iter{parked}.svg").read_bytes()
+        check("marks/archived-svg-is-the-frame-itself",
+              bundle.read(f"{job_id}/epoch_{parked:04d}.svg") == source)
+
+    harness.client.delete(f"/api/jobs/{job_id}/favorites/{other}")
+    check("marks/unstar-removes-one", harness.job(job_id)["favorite_epochs"] == [parked])
+    check("marks/unstarring-twice-is-not-an-error",
+          harness.client.delete(f"/api/jobs/{job_id}/favorites/{other}").status_code == 200)
+
+    # -- marks belong to the job -------------------------------------------
+    harness.client.put(f"/api/jobs/{job_id}/viewed-epoch", json={"epoch": parked})
+    harness.client.delete(f"/api/jobs/{job_id}")
+    wait_for(lambda: harness.client.get(f"/api/jobs/{job_id}").status_code == 404,
+             timeout=30, what="the job to be deleted")
+    connection = sqlite3.connect(harness.root / "sldgen.sqlite")
+    try:
+        left = connection.execute(
+            "SELECT (SELECT COUNT(*) FROM job_views WHERE job_id = ?)"
+            "     + (SELECT COUNT(*) FROM job_favorites WHERE job_id = ?)",
+            (job_id, job_id),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    check("marks/deleting-a-job-takes-its-marks-with-it", left == 0, str(left))
+
+
 # -- lineage and list filters ----------------------------------------------
 
 
@@ -451,6 +561,7 @@ def main():
         test_params_last_and_presets(harness)
         sha256 = harness.upload()["sha256"]
         parent_id = test_frames(harness, sha256)
+        test_marks(harness, sha256)
         test_lineage_and_filters(harness, sha256, parent_id)
         test_global_events(harness, sha256)
         test_cleanup(harness, sha256)

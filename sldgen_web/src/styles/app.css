@@ -661,6 +661,7 @@ a {
   cursor: pointer;
   display: grid;
   gap: 0;
+  position: relative;
 }
 
 .filmstrip__frame img {
@@ -687,6 +688,42 @@ a {
 
 .filmstrip__frame[aria-current='true'] figcaption {
   background: var(--ink);
+  color: var(--paper);
+}
+
+/* Starred frames.
+ *
+ * A star is the user's judgement, not machine state, so it gets a glyph and
+ * weight rather than a hue (tokens.css SS3). It sits over the frame instead of
+ * changing the caption, because the caption already carries "this is the frame
+ * you are on" and the two must stay tellable apart. */
+.filmstrip__star {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--paper);
+  /* The frames are white line art, so the glyph needs its own ground. */
+  text-shadow: 0 0 2px var(--ink), 0 0 3px var(--ink);
+  pointer-events: none;
+}
+
+.filmstrip__frame--starred {
+  border-color: var(--rule-strong);
+}
+
+.filmstrip__favorites {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 10px 8px;
+}
+
+.btn--starred {
+  background: var(--ink);
+  border-color: var(--ink);
   color: var(--paper);
 }
 

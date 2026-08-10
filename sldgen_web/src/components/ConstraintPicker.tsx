@@ -3,6 +3,7 @@ import type { JobSummary, Partition } from '../api/types'
 import type { InputRef, OptionalField } from '../lib/formstate'
 import { jobLabel } from '../lib/format'
 import { SPEC_BY_NAME } from '../lib/params'
+import { JobThumb } from './JobThumb'
 
 /**
  * Picks the files that feed `--avoid`, `--attract`, `--init-points` and
@@ -114,7 +115,7 @@ export function ConstraintPicker({
                             })
                           }
                         >
-                          <img src={job.preview_url} alt={jobLabel(job)} />
+                          <JobThumb job={job} alt={jobLabel(job)} />
                         </button>
                       ))}
                     </div>

@@ -5,6 +5,7 @@ import { ERROR_COPY, formatAgo, formatDuration, jobLabel } from '../lib/format'
 import { combinedRing } from '../lib/ring'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
+import { JobThumb } from './JobThumb'
 import { Ring } from './Ring'
 
 export type RailSort = 'newest' | 'longest'
@@ -224,7 +225,6 @@ function RailRow({
   focused: boolean
   onToggle: (id: string, additive: boolean) => void
 }) {
-  const [thumbBroken, setThumbBroken] = useState(false)
   const title =
     job.state === 'failed' && job.error_class
       ? ERROR_COPY[job.error_class]?.headline
@@ -253,17 +253,11 @@ function RailRow({
         onClick={(event) => event.stopPropagation()}
         onChange={() => onToggle(job.id, true)}
       />
-      {thumbBroken ? (
-        <span className="row__thumb row__thumb--empty" />
-      ) : (
-        <img
-          className="row__thumb"
-          src={`${job.preview_url}?v=${job.current_epoch}`}
-          alt=""
-          loading="lazy"
-          onError={() => setThumbBroken(true)}
-        />
-      )}
+      <JobThumb
+        job={job}
+        className="row__thumb"
+        emptyClassName="row__thumb row__thumb--empty"
+      />
       <span className="row__body">
         <span className="row__title">{jobLabel(job)}</span>
         <span className="row__meta">

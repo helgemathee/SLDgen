@@ -281,6 +281,17 @@ def test_preview_run_then_promote(harness, sha256):
     check("promote/finalised",
           (run_dir / "final_sld.svg").exists() and (run_dir / "metrics.json").exists())
 
+    # The rail's thumbnail comes from /preview, so "newest" has to mean newest on
+    # disk: after finalisation that is final_sld.png, which is written after the
+    # heartbeat that still names the last iteration frame.
+    served = harness.client.get(f"/api/jobs/{job_id}/preview")
+    check("promote/preview-is-the-final-render",
+          served.content == (run_dir / "final_sld.png").read_bytes(),
+          repr(served.content[:40]))
+    check("promote/preview-must-be-revalidated",
+          "no-cache" in served.headers.get("cache-control", ""),
+          repr(served.headers.get("cache-control")))
+
     segments = done["segments"]
     check("promote/second-segment-resumed", len(segments) == 2
           and segments[1]["resume_from"] is not None, str(len(segments)))

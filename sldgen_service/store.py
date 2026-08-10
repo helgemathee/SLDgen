@@ -47,6 +47,18 @@ class StoreError(RuntimeError):
     """An operation the state machine does not permit."""
 
 
+#: Every read of a job carries its marks, so no caller has to remember to ask.
+#: The favourite *count* rather than the epochs: this runs for every job in the
+#: rail's stream once a second, and the rail only needs to know there are some.
+_JOB_SELECT = """
+SELECT jobs.*,
+       job_views.epoch AS viewed_epoch,
+       (SELECT COUNT(*) FROM job_favorites WHERE job_favorites.job_id = jobs.id)
+         AS favorite_count
+  FROM jobs LEFT JOIN job_views ON job_views.job_id = jobs.id
+"""
+
+
 class Store:
     def __init__(self, config):
         self.config = config
@@ -211,7 +223,9 @@ class Store:
         return self.get_job(job_id)
 
     def get_job(self, job_id):
-        row = self.connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = self.connection.execute(
+            f"{_JOB_SELECT} WHERE jobs.id = ?", (job_id,)
+        ).fetchone()
         return _job_from_row(row)
 
     def require_job(self, job_id):
@@ -229,20 +243,20 @@ class Store:
         clauses, args = [], []
         if state:
             states = [state] if isinstance(state, str) else list(state)
-            clauses.append(f"state IN ({','.join('?' * len(states))})")
+            clauses.append(f"jobs.state IN ({','.join('?' * len(states))})")
             args += states
         if batch_id:
-            clauses.append("batch_id = ?")
+            clauses.append("jobs.batch_id = ?")
             args.append(batch_id)
         if parent_job_id:
-            clauses.append("parent_job_id = ?")
+            clauses.append("jobs.parent_job_id = ?")
             args.append(parent_job_id)
         if cursor:
-            clauses.append("id < ?")
+            clauses.append("jobs.id < ?")
             args.append(cursor)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self.connection.execute(
-            f"SELECT * FROM jobs {where} ORDER BY id DESC LIMIT ?", args + [int(limit)]
+            f"{_JOB_SELECT} {where} ORDER BY jobs.id DESC LIMIT ?", args + [int(limit)]
         ).fetchall()
         return [_job_from_row(row) for row in rows]
 
@@ -392,6 +406,52 @@ class Store:
         if resolved_caption:
             fields["resolved_caption"] = resolved_caption
         return self.update_job(job_id, **fields)
+
+    # -- marks: the viewed frame and the favourites -------------------------
+
+    def set_viewed_epoch(self, job_id, epoch):
+        """Remember (or forget, with ``None``) which frame this job is parked on.
+
+        Cleared rather than stored when the UI is following the head of the
+        strip, so "no row" means "show me whatever is newest" -- which is what a
+        running job's thumbnail must keep doing.
+        """
+        self.require_job(job_id)
+        with self.transaction() as connection:
+            if epoch is None:
+                connection.execute("DELETE FROM job_views WHERE job_id = ?", (job_id,))
+            else:
+                connection.execute(
+                    "INSERT INTO job_views(job_id, epoch, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(job_id) DO UPDATE SET epoch=excluded.epoch, "
+                    "updated_at=excluded.updated_at",
+                    (job_id, int(epoch), db.utcnow()),
+                )
+        return None if epoch is None else int(epoch)
+
+    def list_favorites(self, job_id):
+        rows = self.connection.execute(
+            "SELECT epoch, created_at FROM job_favorites WHERE job_id = ? ORDER BY epoch",
+            (job_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_favorite(self, job_id, epoch):
+        """Idempotent: marking a frame twice is the same as marking it once."""
+        self.require_job(job_id)
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO job_favorites(job_id, epoch, created_at) VALUES (?, ?, ?)",
+                (job_id, int(epoch), db.utcnow()),
+            )
+        return self.list_favorites(job_id)
+
+    def remove_favorite(self, job_id, epoch):
+        with self.transaction() as connection:
+            connection.execute(
+                "DELETE FROM job_favorites WHERE job_id = ? AND epoch = ?", (job_id, int(epoch))
+            )
+        return self.list_favorites(job_id)
 
     # -- inputs -----------------------------------------------------------
 

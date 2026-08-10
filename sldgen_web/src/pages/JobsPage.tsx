@@ -1,3 +1,4 @@
+import { JobThumb } from '../components/JobThumb'
 import { Ring } from '../components/Ring'
 import { formatAgo, jobLabel } from '../lib/format'
 import { navigate } from '../router'
@@ -44,7 +45,7 @@ export function JobsPage() {
               if (event.key === 'Enter') navigate({ name: 'job', id: job.id })
             }}
           >
-            <img src={`${job.preview_url}?v=${job.current_epoch}`} alt={jobLabel(job)} />
+            <JobThumb job={job} alt={jobLabel(job)} />
           </div>
           <div className="cell__body">
             <div className="cell__head">

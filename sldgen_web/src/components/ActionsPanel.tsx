@@ -15,10 +15,13 @@ import { useApp } from '../state/store'
  */
 export function ActionsPanel({
   job,
+  favorites,
   onRunAgain,
   onChanged,
 }: {
   job: JobDetail
+  /** Starred epochs, passed in so the button appears the moment one is set. */
+  favorites: number[]
   onRunAgain: () => void
   onChanged: () => void
 }) {
@@ -213,6 +216,16 @@ export function ActionsPanel({
             {job.artifacts.some((artifact) => artifact.name === 'sketch.mp4') && (
               <a className="btn btn--small" href={fileUrl(job.id, 'target/run/sketch.mp4')} download>
                 mp4
+              </a>
+            )}
+            {favorites.length > 0 && (
+              <a
+                className="btn btn--small"
+                href={`/api/jobs/${job.id}/favorites.zip`}
+                download
+                title={`Epoch ${favorites.join(', ')}`}
+              >
+                ★ {favorites.length} starred SVG{favorites.length === 1 ? '' : 's'} (.zip)
               </a>
             )}
             <a

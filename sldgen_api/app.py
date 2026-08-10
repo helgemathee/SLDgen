@@ -133,6 +133,11 @@ def create_app(config=None):
             "started_at": job["started_at"],
             "finished_at": job["finished_at"],
             "preview_url": f"/api/jobs/{job['id']}/preview",
+            # The frame the user parked on, and how many they starred. Both are
+            # in the summary because the rail draws from it: the thumbnail is
+            # the viewed frame, and its cache key has to change when that does.
+            "viewed_epoch": job["viewed_epoch"],
+            "favorite_count": job["favorite_count"],
         }
 
     def job_detail(job):
@@ -154,6 +159,7 @@ def create_app(config=None):
             "artifacts": job_files.artifacts(config, job["id"]),
             "state_json": live_state,
             "command": " ".join(_command_for(job)),
+            "favorite_epochs": [row["epoch"] for row in store.list_favorites(job["id"])],
         }
 
     def _command_for(job):
@@ -179,6 +185,19 @@ def create_app(config=None):
         if not candidate.is_file():
             raise HTTPException(404, f"no such file: {relative}")
         return candidate
+
+    def live_file(path):
+        """Serve a file the run may rewrite under the same URL.
+
+        ``final_sld.svg`` is replaced every time a job is promoted and finalises
+        again, and ``/preview`` resolves to a different frame every save
+        interval, so without this a browser is free to keep showing the old
+        bytes: the response carries an ETag but no ``Cache-Control``, and
+        heuristic freshness then lets Chrome reuse it without asking. ``no-cache``
+        means "ask before reusing", not "do not store"; the cost of asking is one
+        local read of a file that is at most a few hundred KB.
+        """
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
     def segment_log_path(job_id, segment_seq=None):
         segments = store.list_segments(job_id)
@@ -426,33 +445,60 @@ def create_app(config=None):
     @app.get("/api/jobs/{job_id}/files/{path:path}")
     def get_file(job_id: str, path: str):
         require_job(job_id)
-        return FileResponse(safe_job_file(job_id, path))
+        return live_file(safe_job_file(job_id, path))
 
     @app.get("/api/jobs/{job_id}/preview")
     def get_preview(job_id: str):
-        """The newest frame, whatever it is called.
+        """The picture that stands for this job.
 
-        Reads the heartbeat first (it names the frame the segment just wrote) and
-        falls back to scanning, so a preview is available even when a segment
-        died before updating state.json.
+        Ordinarily the newest one, and three things can be newest: the frame the
+        heartbeat names, the frame on disk (the heartbeat may be missing, or the
+        segment may have died before writing it), and ``final_sld.png``, which
+        finalisation writes *after* the last heartbeat. Newest-by-mtime picks
+        between them without having to know which phase the job is in -- which
+        matters both ways: a completed job should show its final render rather
+        than its last iteration, and a promoted job that is running again should
+        show its new frames rather than the previous run's final.
+
+        Two exceptions bracket that. A job the user has scrubbed to a particular
+        frame shows *that* frame -- the point of parking on epoch 1600 is that it
+        is the picture worth looking at. And a job that has not rendered anything
+        yet shows the image it was submitted with, because a queue of white
+        squares says nothing about what is in the queue.
         """
-        require_job(job_id)
+        job = require_job(job_id)
+        run_dir = config.run_dir(job_id)
+
+        if job["viewed_epoch"] is not None:
+            frame = run_dir / "svg_to_png" / f"iter_{job['viewed_epoch']:04d}.png"
+            if frame.exists():
+                return live_file(frame)
+
+        candidates = []
+
         state_path = config.state_path(job_id)
         if state_path.exists():
             try:
                 latest = json.loads(state_path.read_text()).get("latest_preview")
             except (OSError, ValueError):
                 latest = None
-            if latest and (config.run_dir(job_id) / latest).exists():
-                return FileResponse(config.run_dir(job_id) / latest)
+            if latest and (run_dir / latest).exists():
+                candidates.append(run_dir / latest)
 
-        final = config.run_dir(job_id) / "final_sld.png"
+        final = run_dir / "final_sld.png"
         if final.exists():
-            return FileResponse(final)
-        frames = sorted((config.run_dir(job_id) / "svg_to_png").glob("iter_*.png"))
-        if not frames:
-            raise HTTPException(404, "job has no preview yet")
-        return FileResponse(frames[-1])
+            candidates.append(final)
+        frames = sorted((run_dir / "svg_to_png").glob("iter_*.png"))
+        if frames:
+            candidates.append(frames[-1])
+
+        if candidates:
+            return live_file(max(candidates, key=lambda path: path.stat().st_mtime))
+
+        submitted = config.job_inputs_dir(job_id) / "target.png"
+        if submitted.exists():
+            return live_file(submitted)
+        raise HTTPException(404, "job has no preview yet")
 
     @app.get("/api/jobs/{job_id}/frames")
     def list_frames(job_id: str):
@@ -521,6 +567,112 @@ def create_app(config=None):
                 else None
             ),
         }
+
+    # -- marks: the viewed frame and the favourites ---------------------------
+    #
+    # Both live on the server rather than in the browser, because the judgement
+    # they record ("epoch 1600 is the one") is expensive to make and is made
+    # about a job, not about a browser. The same job is opened from a laptop and
+    # a phone; localStorage would lose that on the second device.
+
+    def frame_paths(job_id, epoch):
+        """The PNG and SVG for one epoch. run.py pads the PNG and not the SVG."""
+        run_dir = config.run_dir(job_id)
+        return (
+            run_dir / "svg_to_png" / f"iter_{int(epoch):04d}.png",
+            run_dir / "svg_logs" / f"svg_iter{int(epoch)}.svg",
+        )
+
+    def favorites_payload(job_id):
+        marked = store.list_favorites(job_id)
+        out = []
+        for row in marked:
+            png, svg = frame_paths(job_id, row["epoch"])
+            out.append(
+                {
+                    "epoch": row["epoch"],
+                    "created_at": row["created_at"],
+                    "png_url": (
+                        f"/api/jobs/{job_id}/files/target/run/svg_to_png/{png.name}"
+                        if png.exists()
+                        else None
+                    ),
+                    "svg_url": (
+                        f"/api/jobs/{job_id}/files/target/run/svg_logs/{svg.name}"
+                        if svg.exists()
+                        else None
+                    ),
+                }
+            )
+        return {"job_id": job_id, "favorites": out}
+
+    @app.put("/api/jobs/{job_id}/viewed-epoch")
+    def put_viewed_epoch(job_id: str, body: dict = Body(...)):
+        """Park this job on a frame, or (``epoch: null``) let it follow the head.
+
+        Not validated against the frames on disk: the UI sends what it is
+        showing, and a frame pruned later should leave the mark alone rather
+        than have the service second-guess it. ``/preview`` falls back to newest
+        when the frame is missing, which is the right behaviour anyway.
+        """
+        require_job(job_id)
+        epoch = body.get("epoch")
+        if epoch is not None:
+            try:
+                epoch = int(epoch)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "epoch must be an integer or null") from None
+            if epoch < 0:
+                raise HTTPException(400, "epoch must not be negative")
+        return {"job_id": job_id, "viewed_epoch": store.set_viewed_epoch(job_id, epoch)}
+
+    @app.get("/api/jobs/{job_id}/favorites")
+    def get_favorites(job_id: str):
+        require_job(job_id)
+        return favorites_payload(job_id)
+
+    @app.put("/api/jobs/{job_id}/favorites/{epoch}")
+    def put_favorite(job_id: str, epoch: int):
+        """Star a frame. Idempotent, so the UI can send it without checking first.
+
+        Unlike the viewed epoch this *is* checked against the frames on disk: a
+        favourite is a promise that there is something to download, and a typo'd
+        epoch would otherwise sit in the list producing an empty archive.
+        """
+        require_job(job_id)
+        png, svg = frame_paths(job_id, epoch)
+        if not png.exists() and not svg.exists():
+            raise HTTPException(404, f"job has no frame at epoch {epoch}")
+        store.add_favorite(job_id, epoch)
+        return favorites_payload(job_id)
+
+    @app.delete("/api/jobs/{job_id}/favorites/{epoch}")
+    def delete_favorite(job_id: str, epoch: int):
+        require_job(job_id)
+        store.remove_favorite(job_id, epoch)
+        return favorites_payload(job_id)
+
+    @app.get("/api/jobs/{job_id}/favorites.zip")
+    def download_favorites(job_id: str):
+        """The starred frames' SVGs, and only those -- the point of starring them.
+
+        Named by epoch rather than by SLDgen's ``svg_iter200.svg``, because the
+        archive is opened next to three others and the epoch is the only thing
+        that distinguishes them once they are out of the job directory.
+        """
+        require_job(job_id)
+        entries = []
+        for row in store.list_favorites(job_id):
+            _, svg = frame_paths(job_id, row["epoch"])
+            if svg.exists():
+                entries.append((f"{job_id}/epoch_{row['epoch']:04d}.svg", svg))
+        if not entries:
+            raise HTTPException(404, "no favourite frames with an SVG to archive")
+        return StreamingResponse(
+            stream_zip(entries),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{job_id}_favorites.zip"'},
+        )
 
     @app.get("/api/jobs/{job_id}/lineage")
     def get_lineage(job_id: str):

@@ -6,6 +6,7 @@ const SHORTCUTS: [string, string][] = [
   ['Space', 'Play or pause the filmstrip'],
   ['← / →', 'Step one frame (shift: ten)'],
   ['Home / End', 'First or last frame'],
+  ['f', 'Star this frame (starred SVGs download together)'],
   ['p', 'Promote a waiting job'],
   ['l', 'Open the log'],
   ['n', 'Start a new job'],

@@ -19,16 +19,23 @@ export function Filmstrip({
   onIndex,
   playing,
   onPlaying,
+  favorites,
+  onToggleFavorite,
 }: {
   frames: FramesResponse
   index: number
   onIndex: (index: number) => void
   playing: boolean
   onPlaying: (playing: boolean) => void
+  /** Epochs starred on this job, ascending -- kept on the server (SS6.2). */
+  favorites: number[]
+  onToggleFavorite: (epoch: number) => void
 }) {
   const track = useRef<HTMLDivElement>(null)
   const count = frames.frames.length
   const current = frames.frames[index]
+  const starred = new Set(favorites)
+  const isStarred = current ? starred.has(current.epoch) : false
 
   // 10 fps, matching the mp4, so the two show the same motion.
   useEffect(() => {
@@ -77,7 +84,7 @@ export function Filmstrip({
         {frames.frames.map((frame, position) => (
           <figure
             key={frame.epoch}
-            className="filmstrip__frame"
+            className={`filmstrip__frame${starred.has(frame.epoch) ? ' filmstrip__frame--starred' : ''}`}
             aria-current={position === index}
             onClick={() => {
               onPlaying(false)
@@ -87,6 +94,7 @@ export function Filmstrip({
             tabIndex={-1}
           >
             <img src={frame.png_url} alt={`epoch ${frame.epoch}`} loading="lazy" />
+            {starred.has(frame.epoch) && <span className="filmstrip__star">★</span>}
             <figcaption>{frame.epoch}</figcaption>
           </figure>
         ))}
@@ -115,6 +123,21 @@ export function Filmstrip({
           }}
         />
         <span className="mono">epoch {current?.epoch}</span>
+        {current && (
+          <button
+            type="button"
+            className={`btn btn--small${isStarred ? ' btn--starred' : ''}`}
+            aria-pressed={isStarred}
+            title={
+              isStarred
+                ? `Unstar epoch ${current.epoch}`
+                : `Star epoch ${current.epoch} (f) — starred frames download together`
+            }
+            onClick={() => onToggleFavorite(current.epoch)}
+          >
+            {isStarred ? '★' : '☆'}
+          </button>
+        )}
         {current?.svg_url && (
           <>
             <a
@@ -132,6 +155,36 @@ export function Filmstrip({
           </>
         )}
       </div>
+
+      {favorites.length > 0 && (
+        <div className="filmstrip__favorites">
+          <span className="eyebrow">Starred</span>
+          {favorites.map((epoch) => {
+            const position = frames.frames.findIndex((frame) => frame.epoch === epoch)
+            return (
+              <button
+                key={epoch}
+                type="button"
+                className="chip"
+                aria-pressed={position === index}
+                // A frame can be starred and then pruned; the epoch is still the
+                // answer to "which one was good", so it stays listed, just dead.
+                disabled={position === -1}
+                title={position === -1 ? 'That frame is no longer on disk' : `Jump to epoch ${epoch}`}
+                onClick={() => {
+                  onPlaying(false)
+                  onIndex(position)
+                }}
+              >
+                ★ {epoch}
+              </button>
+            )
+          })}
+          <a className="btn btn--small" href={`/api/jobs/${frames.job_id}/favorites.zip`} download>
+            ↓ SVGs
+          </a>
+        </div>
+      )}
 
       <div className="panel__body" style={{ paddingTop: 0, display: 'grid', gap: 6 }}>
         <p className="note" style={{ margin: 0 }}>

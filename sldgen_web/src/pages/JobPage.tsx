@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api } from '../api/client'
 import { ActionsPanel } from '../components/ActionsPanel'
 import { ArtworkPane, availableArtwork, defaultTab, type ArtworkTab } from '../components/ArtworkPane'
 import { Filmstrip } from '../components/Filmstrip'
@@ -14,7 +15,7 @@ import { useJob } from '../state/useJob'
 
 export function JobPage({ jobId }: { jobId: string }) {
   const { job, frames, lineage, error, refresh } = useJob(jobId)
-  const { setSelection } = useApp()
+  const { setSelection, toast } = useApp()
   const [tab, setTab] = useState<ArtworkTab | null>(null)
   const [frameIndex, setFrameIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -32,6 +33,7 @@ export function JobPage({ jobId }: { jobId: string }) {
     setTab(null)
     setFrameIndex(0)
     setPlaying(false)
+    setPinned(true)
     setSegmentSeq(null)
     setShowLog(false)
   }, [jobId])
@@ -43,7 +45,83 @@ export function JobPage({ jobId }: { jobId: string }) {
     if (pinned && frames && frames.frames.length > 0) setFrameIndex(frames.frames.length - 1)
   }, [frames, pinned])
 
+  /**
+   * The starred frames, held here rather than read straight off the job so a
+   * click lands immediately. The server's list wins whenever it changes, which
+   * is how a star set on the laptop turns up on the phone.
+   */
+  const [favorites, setFavorites] = useState<number[]>([])
+  const serverFavorites = job?.favorite_epochs
+  const favoritesKey = (serverFavorites ?? []).join(',')
+  // Keyed on the list's *contents*, not on the job object: the detail is
+  // refetched whenever the job changes state, and re-running this on an
+  // unchanged list would stamp on a star that was just clicked.
+  useEffect(() => {
+    setFavorites(serverFavorites ?? [])
+  }, [jobId, favoritesKey])
+
   const currentFrame = frames?.frames[frameIndex] ?? null
+
+  const toggleFavorite = useCallback(
+    (epoch: number) => {
+      const marked = favorites.includes(epoch)
+      const call = marked ? api.removeFavorite(jobId, epoch) : api.addFavorite(jobId, epoch)
+      // Optimistic: the star is a judgement made at speed, going through 4000
+      // frames, and a round-trip per click would be felt.
+      setFavorites((current) =>
+        marked ? current.filter((value) => value !== epoch) : [...current, epoch].sort((a, b) => a - b),
+      )
+      call
+        .then((response) => setFavorites(response.favorites.map((favorite) => favorite.epoch)))
+        .catch((cause) => {
+          setFavorites(serverFavorites ?? [])
+          toast(cause instanceof Error ? cause.message : 'Could not save that star.')
+        })
+    },
+    [favorites, jobId, serverFavorites, toast],
+  )
+
+  /**
+   * Where this job is parked, restored once per job and then written back as
+   * the user scrubs.
+   *
+   * `saved` tracks what the server already has, so scrubbing does not write the
+   * same epoch twice; the ref also gates the writer until the restore has run,
+   * because saving before restoring would overwrite the mark with the default
+   * position of a page that has not been placed yet.
+   */
+  const mark = useRef<{ jobId: string | null; saved: number | null }>({ jobId: null, saved: null })
+
+  useEffect(() => {
+    if (!job || !frames || frames.frames.length === 0) return
+    if (mark.current.jobId === job.id) return
+    mark.current = { jobId: job.id, saved: job.viewed_epoch }
+    if (job.viewed_epoch === null) return
+    const position = frames.frames.findIndex((frame) => frame.epoch === job.viewed_epoch)
+    if (position < 0) return
+    setPinned(false)
+    setFrameIndex(position)
+    // The frame is why the job was left parked here, so show it rather than the
+    // final SVG the page would otherwise open on.
+    setTab('preview')
+  }, [job, frames])
+
+  useEffect(() => {
+    const state = mark.current
+    if (!job || !frames || frames.frames.length === 0 || state.jobId !== job.id) return
+    // Parking on the newest frame is not parking: it is the default, and a job
+    // that is still running must go on showing whatever it produces next.
+    const atHead = frameIndex >= frames.frames.length - 1
+    const wanted = atHead ? null : frames.frames[frameIndex]?.epoch ?? null
+    if (wanted === state.saved) return
+    // Debounced because arrow-key scrubbing changes this several times a second.
+    const timer = setTimeout(() => {
+      state.saved = wanted
+      api.setViewedEpoch(job.id, wanted).catch(() => undefined)
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [job, frames, frameIndex])
+
   const available = useMemo(
     () => (job ? availableArtwork(job, currentFrame?.png_url ?? null) : null),
     [job, currentFrame],
@@ -102,6 +180,12 @@ export function JobPage({ jobId }: { jobId: string }) {
             setFrameIndex(count - 1)
           }
           break
+        case 'f':
+          if (currentFrame) {
+            event.preventDefault()
+            toggleFavorite(currentFrame.epoch)
+          }
+          break
         case 'l':
           event.preventDefault()
           setShowLog((value) => !value)
@@ -118,7 +202,7 @@ export function JobPage({ jobId }: { jobId: string }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [frames, job?.state])
+  }, [frames, job?.state, currentFrame, toggleFavorite])
 
   if (error) {
     return (
@@ -185,13 +269,20 @@ export function JobPage({ jobId }: { jobId: string }) {
             }}
             playing={playing}
             onPlaying={setPlaying}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
           />
         )}
         {showLog && <LogViewer job={job} segment={segment} />}
       </div>
 
       <div className="detail__right">
-        <ActionsPanel job={job} onRunAgain={() => setRunAgainOpen(true)} onChanged={refresh} />
+        <ActionsPanel
+          job={job}
+          favorites={favorites}
+          onRunAgain={() => setRunAgainOpen(true)}
+          onChanged={refresh}
+        />
         <SegmentList
           job={job}
           selected={segment?.seq ?? null}

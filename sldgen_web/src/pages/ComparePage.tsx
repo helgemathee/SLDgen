@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import type { FramesResponse, JobDetail } from '../api/types'
+import { previewSrc } from '../components/JobThumb'
 import { Ring } from '../components/Ring'
 import { formatParamValue } from '../lib/params'
 import { distinguishingParams, paramLabel } from '../lib/paramdiff'
@@ -131,7 +132,7 @@ export function ComparePage({ ids }: { ids: string[] }) {
           sharedEpoch !== null
             ? strip?.frames.find((frame) => frame.epoch === sharedEpoch) ?? null
             : null
-        const image = atShared?.png_url ?? `${job.preview_url}?v=${job.current_epoch}`
+        const image = atShared?.png_url ?? previewSrc(job)
         return (
           <div className="cell" key={job.id}>
             <div className="cell__art">

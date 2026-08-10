@@ -169,10 +169,15 @@ def main():
 
         rate = (epoch - start_epoch) / max(time.time() - started, 1e-9)
         if epoch % args.save_interval == 0 and epoch > 0:
+            # Distinct per epoch, so a test can tell *which* frame was served --
+            # "the preview follows the frame you parked on" is unprovable when
+            # every frame is byte-identical.
             (run_dir / "svg_to_png" / f"iter_{epoch:04d}.png").write_bytes(
-                b"\x89PNG\r\n\x1a\n(frame)"
+                b"\x89PNG\r\n\x1a\n(frame %d)" % epoch
             )
-            (run_dir / "svg_logs" / f"svg_iter{epoch}.svg").write_text("<svg/>")
+            (run_dir / "svg_logs" / f"svg_iter{epoch}.svg").write_text(
+                f"<svg><!-- epoch {epoch} --></svg>"
+            )
             latest_preview = f"svg_to_png/iter_{epoch:04d}.png"
             write_state(run_dir, epoch=epoch, num_iter=args.num_iter, stop_at=stop_at,
                         phase="optimizing", iters_per_sec=rate, resolved_caption=caption,

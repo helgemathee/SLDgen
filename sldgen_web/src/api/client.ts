@@ -1,6 +1,7 @@
 import type {
   CleanupResult,
   DiskReport,
+  FavoritesResponse,
   FramesResponse,
   Health,
   JobDetail,
@@ -81,6 +82,19 @@ export const api = {
 
   getJob: (id: string) => request<JobDetail>(`/api/jobs/${id}`),
   frames: (id: string) => request<FramesResponse>(`/api/jobs/${id}/frames`),
+
+  /** `null` means "follow the newest frame again" (Spec 3 SS6.2). */
+  setViewedEpoch: (id: string, epoch: number | null) =>
+    request<{ job_id: string; viewed_epoch: number | null }>(`/api/jobs/${id}/viewed-epoch`, {
+      method: 'PUT',
+      body: JSON.stringify({ epoch }),
+    }),
+  favorites: (id: string) => request<FavoritesResponse>(`/api/jobs/${id}/favorites`),
+  addFavorite: (id: string, epoch: number) =>
+    request<FavoritesResponse>(`/api/jobs/${id}/favorites/${epoch}`, { method: 'PUT' }),
+  removeFavorite: (id: string, epoch: number) =>
+    request<FavoritesResponse>(`/api/jobs/${id}/favorites/${epoch}`, { method: 'DELETE' }),
+
   lineage: (id: string) => request<Lineage>(`/api/jobs/${id}/lineage`),
   command: (id: string) => request<string>(`/api/jobs/${id}/command`),
 

@@ -10,7 +10,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -108,6 +108,25 @@ CREATE TABLE IF NOT EXISTS presets (
   name        TEXT NOT NULL,
   params_json TEXT NOT NULL,
   created_at  TEXT NOT NULL
+);
+
+-- Which frame of a job you were last looking at, and which frames you marked as
+-- good. Both are server-side for the same reason the parameter state is: the
+-- same jobs are inspected from several browsers and devices, and a judgement
+-- about a 4000-frame run ("epoch 1600 is the one") is too expensive to make
+-- again on the next machine. Judgements about frames, not UI chrome -- so they
+-- are real tables rather than another blob in `ui_state`.
+CREATE TABLE IF NOT EXISTS job_views (
+  job_id     TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+  epoch      INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_favorites (
+  job_id     TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  epoch      INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (job_id, epoch)
 );
 """
 
