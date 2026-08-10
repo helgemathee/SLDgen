@@ -565,6 +565,13 @@ a {
   border: 1px solid var(--rule);
   cursor: grab;
   touch-action: none;
+  /* `overflow: hidden` alone is not enough in WebKit: a zoomed or panned stage
+   * is a transformed descendant, and Safari lets it paint outside this box --
+   * over the Actions and Segments panels beside it. `contain: paint` states the
+   * clip as a containment promise, which every engine honours. `isolation`
+   * gives older WebKit the stacking context it needs to do the same. */
+  contain: paint;
+  isolation: isolate;
 }
 
 .artwork--grabbing {

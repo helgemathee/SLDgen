@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatBytes } from '../lib/format'
+import { ZOOM_STEP, actualSizeView, fitView, zoomCentered } from '../lib/zoom'
 
 export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition'
 
@@ -72,9 +73,77 @@ export function ArtworkPane({
   const [svgMarkup, setSvgMarkup] = useState<string | null>(null)
   const [svgStats, setSvgStats] = useState<{ length: number; segments: number } | null>(null)
   const container = useRef<HTMLDivElement>(null)
+  const stage = useRef<HTMLDivElement>(null)
   const origin = useRef({ x: 0, y: 0, viewX: 0, viewY: 0 })
+  // Measuring the content needs the scale it is currently drawn at, and the
+  // measurement happens in callbacks that would otherwise close over a stale one.
+  const viewRef = useRef(view)
+  viewRef.current = view
+  const fittedOnce = useRef(false)
 
   const url = available[tab]
+
+  /**
+   * The untransformed size of whatever is on the stage, and of the viewport.
+   *
+   * The stage carries a CSS transform, so its rect is divided back out rather
+   * than read from `offsetWidth` -- an inlined SVG's layout box does not always
+   * agree with what it actually paints.
+   */
+  const measure = useCallback(() => {
+    const viewportRect = container.current?.getBoundingClientRect()
+    const content = stage.current?.firstElementChild as HTMLElement | undefined
+    const contentRect = content?.getBoundingClientRect()
+    if (!viewportRect || !contentRect) return null
+    const scale = viewRef.current.scale || 1
+    return {
+      viewport: { width: viewportRect.width, height: viewportRect.height },
+      content: { width: contentRect.width / scale, height: contentRect.height / scale },
+    }
+  }, [])
+
+  const fit = useCallback(() => {
+    const measured = measure()
+    if (!measured) return false
+    const fitted = fitView(measured.content, measured.viewport)
+    if (!fitted) return false
+    setView(fitted)
+    return true
+  }, [measure])
+
+  const actualSize = useCallback(() => {
+    const measured = measure()
+    setView(
+      measured
+        ? actualSizeView(measured.content, measured.viewport)
+        : { scale: 1, x: 0, y: 0 },
+    )
+  }, [measure])
+
+  const step = useCallback(
+    (factor: number) => {
+      const measured = measure()
+      const viewport = measured?.viewport ?? { width: 0, height: 0 }
+      setView((current) => zoomCentered(current, factor, viewport))
+    },
+    [measure],
+  )
+
+  // Fit is the opening view, but only once: after that the view is the user's,
+  // and the tabs exist to be compared at a shared zoom (see above). The frame
+  // retry covers content that has not been laid out yet on the first pass;
+  // an <img> that is still loading is caught by its onLoad instead.
+  useEffect(() => {
+    if (fittedOnce.current) return
+    if (fit()) {
+      fittedOnce.current = true
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      if (fit()) fittedOnce.current = true
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [fit, tab, url, svgMarkup])
 
   // The result is inlined rather than put in an <img> so it can be zoomed
   // without resampling and so its geometry can be measured (SS6.1).
@@ -97,26 +166,6 @@ export function ArtworkPane({
       cancelled = true
     }
   }, [tab, available.result])
-
-  const onWheel = (event: React.WheelEvent) => {
-    event.preventDefault()
-    const rect = container.current?.getBoundingClientRect()
-    if (!rect) return
-    const pointerX = event.clientX - rect.left
-    const pointerY = event.clientY - rect.top
-    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15
-    setView((current) => {
-      const scale = Math.min(24, Math.max(0.1, current.scale * factor))
-      const ratio = scale / current.scale
-      return {
-        scale,
-        // Keep the pixel under the cursor fixed; anything else makes zooming in
-        // on a detail a hunting exercise.
-        x: pointerX - (pointerX - current.x) * ratio,
-        y: pointerY - (pointerY - current.y) * ratio,
-      }
-    })
-  }
 
   return (
     <div className="panel">
@@ -143,7 +192,6 @@ export function ArtworkPane({
         className={`artwork${dragging ? ' artwork--grabbing' : ''}${
           paperBackground ? '' : ' artwork--checker'
         }`}
-        onWheel={onWheel}
         onPointerDown={(event) => {
           setDragging(true)
           ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
@@ -161,6 +209,7 @@ export function ArtworkPane({
         onPointerLeave={() => setDragging(false)}
       >
         <div
+          ref={stage}
           className="artwork__stage"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
         >
@@ -176,7 +225,15 @@ export function ArtworkPane({
               className={strokeBoost ? 'svg-boost' : undefined}
             />
           ) : url ? (
-            <img src={url} alt={TAB_LABELS[tab]} />
+            <img
+              src={url}
+              alt={TAB_LABELS[tab]}
+              // An image has no size until it decodes, so the opening fit waits
+              // for this rather than for React.
+              onLoad={() => {
+                if (!fittedOnce.current && fit()) fittedOnce.current = true
+              }}
+            />
           ) : null}
         </div>
 
@@ -196,9 +253,36 @@ export function ArtworkPane({
           <button
             type="button"
             className="btn btn--small btn--ghost"
-            onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+            onClick={() => step(1 / ZOOM_STEP)}
+            title="Zoom out 10%"
+            aria-label="Zoom out"
           >
-            reset
+            −
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--ghost"
+            onClick={() => step(ZOOM_STEP)}
+            title="Zoom in 10%"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--ghost"
+            onClick={() => fit()}
+            title="Fit the whole drawing in the frame"
+          >
+            fit
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--ghost"
+            onClick={actualSize}
+            title="Actual size (one SVG unit per screen pixel)"
+          >
+            100%
           </button>
           <button
             type="button"

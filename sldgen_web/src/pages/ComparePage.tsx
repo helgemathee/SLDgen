@@ -5,6 +5,7 @@ import { Ring } from '../components/Ring'
 import { formatParamValue } from '../lib/params'
 import { distinguishingParams, paramLabel } from '../lib/paramdiff'
 import { jobLabel } from '../lib/format'
+import { promoteSteps } from '../lib/promote'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 
@@ -181,14 +182,23 @@ export function ComparePage({ ids }: { ids: string[] }) {
                 >
                   Promote to {job.num_iter}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn--small"
-                  disabled={busy || job.current_epoch + 500 > job.num_iter}
-                  onClick={() => promote(job, Math.min(job.num_iter, job.current_epoch + 500))}
-                >
-                  +500
-                </button>
+                {/* The step scales to the horizon: +500 is unreachable on a
+                    100-iteration run, which left this button permanently dead. */}
+                {(() => {
+                  const steps = promoteSteps(job.num_iter, job.current_epoch)
+                  const step = steps[steps.length - 1]
+                  if (!step) return null
+                  return (
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      disabled={busy}
+                      onClick={() => promote(job, job.current_epoch + step)}
+                    >
+                      +{step}
+                    </button>
+                  )
+                })()}
               </div>
             </div>
           </div>

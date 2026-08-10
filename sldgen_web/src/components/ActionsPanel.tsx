@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatDuration } from '../lib/format'
+import { promoteSteps } from '../lib/promote'
 import { useApp } from '../state/store'
 
 /**
@@ -116,11 +117,13 @@ export function ActionsPanel({
 
         {promotable && (
           <div>
-            {waiting && (
-              <div className="eyebrow" style={{ marginBottom: 5 }}>
-                Reached its budget — waiting for you
-              </div>
-            )}
+            <div className="eyebrow" style={{ marginBottom: 5 }}>
+              {waiting ? 'Reached its budget — promote to continue' : 'Promote to continue'}
+            </div>
+            <div className="note" style={{ marginBottom: 5 }}>
+              Same job: it resumes from the last checkpoint and adds a segment, so the epoch count
+              keeps climbing rather than starting a second job.
+            </div>
             <div className="btn-row">
               <button
                 type="button"
@@ -142,7 +145,7 @@ export function ActionsPanel({
                 onChange={(event) => setPromoteTo(Number(event.target.value))}
                 aria-label="Promote to iteration"
               />
-              {[500, 1000].map((step) => (
+              {promoteSteps(job.num_iter, job.current_epoch).map((step) => (
                 <button
                   key={step}
                   type="button"
@@ -174,6 +177,10 @@ export function ActionsPanel({
           <button type="button" className="btn" onClick={onRunAgain}>
             Run again with changes…
           </button>
+          <span className="note">
+            Forks a new job — a changed parameter is a different drawing, so it cannot continue
+            this one.
+          </span>
           {job.state === 'failed' && (
             <button
               type="button"
