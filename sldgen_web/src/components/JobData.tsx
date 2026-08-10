@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { JobDetail, Segment } from '../api/types'
+import { copyText } from '../lib/clipboard'
 import { formatDuration, formatTimestamp } from '../lib/format'
 import { PARAM_SPECS, SECTION_LABELS, formatParamValue } from '../lib/params'
+
+const COPY_LABEL = { idle: 'copy command', copied: 'copied', failed: 'copy failed' } as const
 
 /**
  * What was actually run (Spec 3 SS6.4).
@@ -12,7 +15,8 @@ import { PARAM_SPECS, SECTION_LABELS, formatParamValue } from '../lib/params'
  * operational settings are the exception and are marked as such.
  */
 export function ParamTable({ job, onRunAgain }: { job: JobDetail; onRunAgain: () => void }) {
-  const [copied, setCopied] = useState(false)
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const commandDetails = useRef<HTMLDetailsElement>(null)
   const sections = Array.from(new Set(PARAM_SPECS.map((spec) => spec.section)))
 
   return (
@@ -23,16 +27,16 @@ export function ParamTable({ job, onRunAgain }: { job: JobDetail; onRunAgain: ()
           type="button"
           className="btn btn--small"
           onClick={() => {
-            navigator.clipboard?.writeText(job.command).then(
-              () => {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
-              },
-              () => undefined,
-            )
+            copyText(job.command).then((ok) => {
+              setCopyState(ok ? 'copied' : 'failed')
+              // Nothing reached the clipboard, so put the command on screen
+              // where it can at least be selected by hand.
+              if (!ok && commandDetails.current) commandDetails.current.open = true
+              setTimeout(() => setCopyState('idle'), 1500)
+            })
           }}
         >
-          {copied ? 'copied' : 'copy command'}
+          {COPY_LABEL[copyState]}
         </button>
         <button type="button" className="btn btn--small btn--primary" onClick={onRunAgain}>
           Run again with changes…
@@ -70,7 +74,7 @@ export function ParamTable({ job, onRunAgain }: { job: JobDetail; onRunAgain: ()
           )
         })}
 
-        <details className="group">
+        <details className="group" ref={commandDetails}>
           <summary>
             <span className="eyebrow">Reproduction command</span>
           </summary>
