@@ -16,8 +16,8 @@ round-trip is exact rather than "exact up to defaults".
 
 **Structural vs operational, with nothing in between** (Spec 2 SS4.2). A job's
 parameters and its result are one thing; a job that ran under two different
-structural parameter sets could not be described by either. Only the four
-operational settings may be edited after creation.
+structural parameter sets could not be described by either. Only the operational
+settings may be edited after creation.
 """
 
 from dataclasses import dataclass
@@ -40,9 +40,14 @@ class ParamSpec:
     default: object
 
 
-#: Mirrors SLDgen/config.py. `checkpoint_interval` is the one place the service
-#: deliberately differs from the CLI default (0): Spec 2 SS8 wants a non-zero
-#: default so a crash never costs more than 200 iterations.
+#: Mirrors SLDgen/config.py, except for two operational defaults the service
+#: deliberately sets differently from the CLI:
+#:
+#: * `checkpoint_interval` (CLI default 0): Spec 2 SS8 wants a non-zero default so
+#:   a crash never costs more than 200 iterations.
+#: * `save_video` (CLI default True): service jobs are served as frames -- the web
+#:   UI scrubs `svg_to_png/iter_*.png` and never plays the mp4 -- so the default
+#:   is off, and a daemon host needs no ffmpeg. Set it per job to get one back.
 PARAM_SPECS = (
     ParamSpec("render_size", "--render-size", "int", STRUCTURAL, 512),
     ParamSpec("n_control_points", "--n-control-points", "int", STRUCTURAL, 385),
@@ -95,6 +100,7 @@ PARAM_SPECS = (
     ),
     ParamSpec("save_interval", "--save-interval", "int", OPERATIONAL, 100),
     ParamSpec("checkpoint_interval", "--checkpoint-interval", "int", OPERATIONAL, 200),
+    ParamSpec("save_video", "--no-video", "false_flag", OPERATIONAL, False),
     ParamSpec("verbose", "--verbose", "true_flag", OPERATIONAL, False),
     ParamSpec("debug", "--debug", "true_flag", OPERATIONAL, False),
 )

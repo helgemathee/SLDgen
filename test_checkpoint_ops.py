@@ -229,7 +229,7 @@ def test_fingerprint_ignores_operational_fields():
     """Operational flags must never enter the fingerprint, or nothing would resume."""
     args = parse(["--stop-at", "10"], name="ckptops_fp")
     fingerprint = structural_fingerprint(args)
-    operational = {"save_interval", "checkpoint_interval", "verbose", "debug",
+    operational = {"save_interval", "checkpoint_interval", "save_video", "verbose", "debug",
                    "output_dir", "experiment_name", "stop_at", "resume"}
     leaked = operational & set(fingerprint)
 

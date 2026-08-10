@@ -105,6 +105,9 @@ python sldgen.py --target ./data/firefighter.png                  # full quality
   pybind11 fork (`detail/init.h`); make sure the submodule points at
   `helgemathee/pybind11`.
 - wiregrad "generator Ninja does not match Unix Makefiles" → `rm -rf _skbuild`.
+- `ffmpeg` missing at the end of a run → pass `--no-video`. It skips only the
+  `sketch.mp4` assembly; the frames in `svg_to_png/` are still written. Service
+  jobs pass it by default (`save_video` is off in `sldgen_service/params.py`).
 - `kaleido` 1.x needs system Chrome → `pip install "kaleido==0.2.1"` (bundles chromium).
 - Out-of-memory that isn't SLDgen's fault → check for other GPU hogs (e.g. a
   running ComfyUI); SLDgen itself fits on the 32 GB card.

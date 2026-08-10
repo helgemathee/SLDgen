@@ -125,6 +125,7 @@ export const PARAM_SPECS: ParamSpec[] = [
   { name: 'num_iter', kind: 'int', group: 'structural', section: 'run', default: 4000, label: 'Horizon (num_iter)', min: 1, hint: 'Sets the schedule for every iteration. Changing it means a new job, not a promotion.' },
   { name: 'save_interval', kind: 'int', group: 'operational', section: 'run', default: 100, label: 'Save interval', min: 1, hint: 'Frames exist only at this granularity.' },
   { name: 'checkpoint_interval', kind: 'int', group: 'operational', section: 'run', default: 200, label: 'Checkpoint interval', min: 0, hint: 'A crash never costs more than this many iterations.' },
+  { name: 'save_video', kind: 'false_flag', group: 'operational', section: 'run', default: false, label: 'Save mp4', hint: 'Off by default: the filmstrip scrubs the frames, and the mp4 needs ffmpeg on the worker host.' },
   { name: 'verbose', kind: 'true_flag', group: 'operational', section: 'run', default: false, label: 'Verbose' },
   { name: 'debug', kind: 'true_flag', group: 'operational', section: 'run', default: false, label: 'Debug' },
 ]

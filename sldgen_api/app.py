@@ -310,7 +310,7 @@ def create_app(config=None):
 
     @app.patch("/api/jobs/{job_id}")
     def patch_job(job_id: str, body: dict = Body(...)):
-        """Title, priority, target_epoch and the four operational settings only.
+        """Title, priority, target_epoch and the operational settings only.
 
         A structural edit is a 409 pointing at /run-again, because a job's
         parameters and its result are one thing (Spec 2 SS4.2): a job that ran

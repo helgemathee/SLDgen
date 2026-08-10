@@ -392,9 +392,11 @@ def run(args):
     with open(f"{args.output_dir}/metrics.json", "w") as f:
         json.dump(metrics, f, indent=4)
 
-    # Save video
-    print("\tSaving video...")
-    make_video(args)
+    # Save video (opt-out: --no-video skips the ffmpeg call, and with it the only
+    # hard dependency on ffmpeg being installed. The frames stay on disk either way.)
+    if args.save_video:
+        print("\tSaving video...")
+        make_video(args)
 
     if ckpt_enabled:
         write_state(

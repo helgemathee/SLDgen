@@ -97,6 +97,17 @@ def parse_arguments(custom_args=None):
         help="Set this flag to print loss values during optimization.",
     )
     parser.add_argument("--debug", action="store_true", help="Set this flag to enable debug mode.")
+    parser.add_argument(
+        "--no-video",
+        action="store_false",
+        dest="save_video",
+        help=(
+            "Skip assembling svg_to_png/iter_*.png into sketch.mp4 at the end of the run. "
+            "The frames themselves are still written; only the ffmpeg call is skipped, so "
+            "this is also the flag to use when ffmpeg is not installed. Purely operational: "
+            "it does not shape the trajectory and is not part of the resume fingerprint."
+        ),
+    )
 
     # Target image
     parser.add_argument("--target", type=str, required=True, help="Target image path.")

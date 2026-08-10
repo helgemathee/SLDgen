@@ -74,6 +74,7 @@ def parse_args():
     parser.add_argument("--checkpoint-interval", type=int, default=0)
     parser.add_argument("--caption", default="")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-video", action="store_false", dest="save_video")
     return parser.parse_known_args()[0]
 
 
@@ -206,7 +207,8 @@ def main():
     (run_dir / "final_sld.svg").write_text("<svg><path d='M 0 0 L 1 1'/></svg>")
     (run_dir / "final_sld.png").write_bytes(b"\x89PNG\r\n\x1a\n(final)")
     (run_dir / "metrics.json").write_text(json.dumps({"clip": 0.5, "aesthetic": 5.0}, indent=4))
-    (run_dir / "sketch.mp4").write_bytes(b"(video)")
+    if args.save_video:
+        (run_dir / "sketch.mp4").write_bytes(b"(video)")
     write_state(run_dir, epoch=epoch, num_iter=args.num_iter, stop_at=stop_at,
                 phase="done", iters_per_sec=rate, resolved_caption=caption,
                 latest_checkpoint=latest_checkpoint, latest_preview=latest_preview)

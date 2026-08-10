@@ -222,6 +222,39 @@ def test_periodic_checkpoints():
     return passed
 
 
+def test_no_video_skips_ffmpeg_only():
+    """--no-video drops the mp4 and the ffmpeg call, and nothing else.
+
+    The frames are what the mp4 is assembled from, so they must survive: the
+    flag exists so a host without ffmpeg can still finish a run, not so a run
+    produces less.
+    """
+    called = []
+    original = run_module.make_video
+    run_module.make_video = lambda args: called.append(args) or original(args)
+    try:
+        args = fresh("runseg_novideo", ["--no-video"])
+        quiet_run(args)
+    finally:
+        run_module.make_video = original
+    out = Path(args.output_dir)
+
+    no_video = not (out / "sketch.mp4").exists() and not called
+    # Everything else a completed run owes the caller is still there.
+    finalised = all(
+        (out / name).exists() for name in ("final_sld.svg", "final_sld.png", "metrics.json")
+    )
+    frames = sorted(p.name for p in (out / "svg_to_png").glob("iter_*.png"))
+    frames_ok = frames == ["iter_0000.png", "iter_0002.png", "iter_0004.png", "iter_0006.png"]
+
+    passed = no_video and finalised and frames_ok
+    print(
+        f"[no-video] mp4-absent={no_video} finalised={finalised} frames={len(frames)} : "
+        f"{'PASS' if passed else 'FAIL'}"
+    )
+    return passed
+
+
 def test_resume_refuses_redirected_trajectory():
     """Changing a run-shaping argument between segments must be a hard stop."""
     from SLDgen.checkpoint import CheckpointError
@@ -254,6 +287,7 @@ def main():
         test_segment_stops_without_finalising,
         test_resumed_run_matches_uninterrupted,
         test_periodic_checkpoints,
+        test_no_video_skips_ffmpeg_only,
         test_resume_refuses_redirected_trajectory,
     ):
         ok = test() and ok

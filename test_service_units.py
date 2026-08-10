@@ -104,6 +104,13 @@ def test_params_round_trip():
                argv_to_params(full) == interesting) and ok
     ok = check("params/runtime-flags-present",
                all(flag in full for flag in ("--target", "--output-dir", "--stop-at", "--resume"))) and ok
+
+    # Service jobs are served as frames, so a default job asks SLDgen not to
+    # assemble the mp4 -- and a worker host therefore needs no ffmpeg.
+    ok = check("params/default-job-passes-no-video",
+               "--no-video" in params_to_argv(defaults)) and ok
+    ok = check("params/save-video-drops-the-flag",
+               "--no-video" not in params_to_argv(canonical_params({"save_video": True}))) and ok
     return ok
 
 
@@ -119,8 +126,9 @@ def test_params_groups():
     """Structural vs operational, with nothing in between (Spec 2 SS4.2)."""
     ok = check("params/groups-partition-everything",
                STRUCTURAL_NAMES | OPERATIONAL_NAMES == set(PARAM_NAMES))
-    ok = check("params/operational-is-the-four",
-               OPERATIONAL_NAMES == {"save_interval", "checkpoint_interval", "verbose", "debug"},
+    ok = check("params/operational-is-the-five",
+               OPERATIONAL_NAMES == {"save_interval", "checkpoint_interval", "save_video",
+                                     "verbose", "debug"},
                str(sorted(OPERATIONAL_NAMES))) and ok
 
     base = canonical_params({})

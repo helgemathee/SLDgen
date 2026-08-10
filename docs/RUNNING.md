@@ -54,6 +54,12 @@ python -m venv .venv-service
 **3. tmux and Node** — `sudo apt install tmux` if missing. Node is only needed
 to build the web UI; `start.sh --no-build` skips it.
 
+ffmpeg is *not* on that list: service jobs default to `save_video: false`, which
+passes `--no-video` to SLDgen. The filmstrip scrubs `svg_to_png/iter_*.png`
+directly, so nothing in the UI needs the mp4. Tick **Save mp4** on a job (Run
+section of the form) if you want one, and then ffmpeg must be installed in the
+conda env — `conda install -c conda-forge ffmpeg`.
+
 Then check it all works without touching the GPU:
 
 ```bash

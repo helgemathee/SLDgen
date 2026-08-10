@@ -17,11 +17,12 @@ describe('the parameter schema', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('marks exactly the four operational settings as operational', () => {
+  it('marks exactly the five operational settings as operational', () => {
     expect([...OPERATIONAL_NAMES].sort()).toEqual([
       'checkpoint_interval',
       'debug',
       'save_interval',
+      'save_video',
       'verbose',
     ])
   })
