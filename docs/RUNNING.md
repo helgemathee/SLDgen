@@ -165,13 +165,39 @@ By default the API binds `127.0.0.1`, so it is reachable only from the host
 itself. It has **no authentication**, so the bind address *is* the access
 control — it refuses to bind `0.0.0.0` rather than let that be a typo.
 
-To reach it over Tailscale, bind the tailnet address:
+`SLDGEN_API_HOST` takes a comma-separated list, and one process serves all of
+them on the same port. The usual want is the tailnet *and* the house LAN:
 
 ```bash
-SLDGEN_API_HOST=$(tailscale ip -4) ./start.sh
+SLDGEN_API_HOST=loopback,tailscale,lan ./start.sh
 ```
 
-Or, without changing anything, tunnel over SSH from your laptop:
+Those three tokens expand to this machine's current addresses, so a new DHCP
+lease or a Tailscale reinstall does not mean editing anything:
+
+| Token | Expands to |
+|---|---|
+| `loopback` | `127.0.0.1` |
+| `tailscale` | `tailscale ip -4` |
+| `lan` | the first RFC1918 address on a real interface (`docker0`, bridges and `tailscale0` excluded) |
+
+Anything that is not a token is passed through literally, so explicit addresses
+and hostnames work too:
+
+```bash
+SLDGEN_API_HOST=127.0.0.1,192.168.178.101 ./start.sh
+```
+
+`start.sh` prints one URL per address, and refuses to start if a token does not
+resolve — an empty `tailscale ip -4` is a stopped daemon, not an address.
+
+**On the LAN there is still no authentication.** Anyone on the same network can
+submit jobs, upload files, read `work/` through the API and delete jobs. That is
+usually fine for a home network and never fine for a shared or public one — and
+keep Tailscale **Funnel** off, since it would publish this straight to the
+internet.
+
+Or, without binding anything extra, tunnel over SSH from your laptop:
 
 ```bash
 ssh -L 8765:127.0.0.1:8765 fractal
@@ -189,7 +215,7 @@ Every default is an environment variable. Set it before `./start.sh`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SLDGEN_WORK_ROOT` | `<repo>/work` | Everything generated: database, uploads, jobs, checkpoints |
-| `SLDGEN_API_HOST` | `127.0.0.1` | Bind address. Cannot be `0.0.0.0` |
+| `SLDGEN_API_HOST` | `127.0.0.1` | Bind addresses, comma-separated. Accepts the tokens `loopback`, `tailscale`, `lan`. Cannot be `0.0.0.0` |
 | `SLDGEN_API_PORT` | `8765` | |
 | `SLDGEN_TMUX_SESSION` | `sldgen-service` | Session name |
 | `SLDGEN_PYTHON` | `~/miniforge3/envs/sldgen/bin/python` | The conda interpreter that runs SLDgen |

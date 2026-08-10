@@ -8,9 +8,11 @@
 # well under a second and can be restarted as often as you like while building
 # the UI without disturbing a running job.
 #
-# SLDGEN_API_HOST must be the tailnet address. The service has no
-# authentication by design, so the bind address IS the access control --
-# `python -m sldgen_api` refuses to start on 0.0.0.0.
+# SLDGEN_API_HOST is a comma-separated list of literal addresses -- the tailnet
+# address, the LAN address, or both. The service has no authentication by
+# design, so the bind address IS the access control: `python -m sldgen_api`
+# refuses to start on 0.0.0.0. start.sh's loopback/tailscale/lan tokens are not
+# expanded here; a unit file needs the addresses spelled out.
 #
 # Both units must agree on SLDGEN_WORK_ROOT; it is declared in each rather than
 # defaulted independently.

@@ -785,6 +785,54 @@ def test_singleton_worker(harness):
     check("singleton/says-why", "another worker" in output.lower(), output.strip()[:120])
 
 
+def test_multiple_bind_addresses(harness):
+    """One process, one port, several addresses -- the tailnet-and-LAN case.
+
+    127.0.0.2 stands in for the second interface: the whole 127.0.0.0/8 range is
+    local on Linux, so this exercises real multi-socket binding without needing
+    a tailnet or a router.
+    """
+    print("\n--- multiple bind addresses")
+    port = free_port()
+    env = harness.env()
+    env["SLDGEN_API_HOST"] = "127.0.0.1,127.0.0.2"
+    env["SLDGEN_API_PORT"] = str(port)
+    log = harness.root / "api-multibind.out"
+    process = subprocess.Popen(
+        [sys.executable, "-m", "sldgen_api"],
+        cwd=str(REPO_ROOT), env=env,
+        stdout=open(log, "w"), stderr=subprocess.STDOUT,
+    )
+    try:
+        def answers(host):
+            try:
+                return httpx.get(f"http://{host}:{port}/api/health", timeout=2).status_code == 200
+            except httpx.HTTPError:
+                return False
+
+        wait_for(lambda: answers("127.0.0.1"), timeout=30, what="the multi-bound API")
+        check("multibind/first-address-answers", answers("127.0.0.1"))
+        check("multibind/second-address-answers", answers("127.0.0.2"))
+        check("multibind/one-process", process.poll() is None)
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+    # And the guard still holds against the wildcard that would undo all of it.
+    env["SLDGEN_API_HOST"] = "0.0.0.0"
+    refused = subprocess.run(
+        [sys.executable, "-m", "sldgen_api"],
+        cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+    )
+    check("multibind/wildcard-still-refused", refused.returncode != 0, str(refused.returncode))
+    check("multibind/wildcard-says-why",
+          "authentication" in (refused.stderr + refused.stdout).lower(),
+          (refused.stderr + refused.stdout).strip()[:120])
+
+
 def main():
     harness = Harness()
     try:
@@ -804,6 +852,7 @@ def main():
         test_delete_running_job(harness, sha256)
         test_sse(harness, sha256)
         test_api_restart_does_not_disturb_the_worker(harness, sha256)
+        test_multiple_bind_addresses(harness)
         test_worker_shutdown_requeues(harness, sha256)
         test_crash_recovery(harness, sha256)
         test_adoption(harness, sha256)

@@ -47,6 +47,14 @@ done
 
 die() { echo "start.sh: $*" >&2; exit 1; }
 
+# IPv6 literals need brackets to be a URL at all.
+url_for() {
+  case "$1" in
+    *:*) echo "http://[$1]:$API_PORT" ;;
+    *)   echo "http://$1:$API_PORT" ;;
+  esac
+}
+
 # -- preflight --------------------------------------------------------------
 #
 # Every one of these has bitten someone. Failing here with the reason beats
@@ -60,10 +68,66 @@ command -v tmux >/dev/null || die "tmux is not installed (sudo apt install tmux)
 [ -x "$CONCORDE" ] || echo "start.sh: warning: Concorde not found at $CONCORDE
   TSP initialisation will fail a few seconds into every job. Set CONCORDE_PATH." >&2
 
-if [ "$API_HOST" = "0.0.0.0" ]; then
-  die "refusing to bind 0.0.0.0. The API has no authentication, so the bind
-  address is the access control. Use 127.0.0.1, or your tailnet address."
-fi
+# SLDGEN_API_HOST is a comma-separated list, so "the tailnet and the LAN" is one
+# variable rather than two services. The tokens below expand to whatever this
+# machine's addresses are right now -- a DHCP lease or a tailnet address is not
+# something anyone should have to paste in by hand each time.
+#
+#   loopback   127.0.0.1
+#   tailscale  the tailnet address (`tailscale ip -4`)
+#   lan        the first RFC1918 address on a real interface, docker0 excluded
+#
+#   SLDGEN_API_HOST=loopback,tailscale,lan ./start.sh
+#
+expand_host_token() {
+  case "$1" in
+    loopback) echo "127.0.0.1" ;;
+    tailscale)
+      command -v tailscale >/dev/null || die "SLDGEN_API_HOST asks for 'tailscale', but the tailscale CLI is not installed."
+      # `|| true`: a stopped daemon exits non-zero, and under `set -e` that
+      # would kill start.sh here with no message at all. Returning empty lets
+      # the caller below say which token failed and how to check it.
+      { tailscale ip -4 2>/dev/null | head -n1; } || true
+      ;;
+    lan)
+      # scope global drops loopback; the grep drops docker/tailscale/bridges,
+      # leaving the address the router actually handed this machine. Empty
+      # output (no match) is a non-zero grep, hence `|| true` again.
+      { ip -4 -o addr show scope global 2>/dev/null \
+        | grep -vE '^\s*[0-9]+:\s+(docker|br-|virbr|tailscale|veth)' \
+        | grep -oE '(^|\s)(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)[0-9.]+' \
+        | tr -d ' ' | head -n1; } || true
+      ;;
+    *) echo "$1" ;;
+  esac
+}
+
+resolved_hosts=""
+IFS=',' read -ra host_entries <<< "$API_HOST"
+for entry in "${host_entries[@]}"; do
+  entry="$(echo "$entry" | tr -d '[:space:]')"
+  [ -n "$entry" ] || continue
+  case "$entry" in
+    0.0.0.0|::|'*')
+      die "refusing to bind $entry. The API has no authentication, so the bind
+  address is the access control. List the addresses you want instead, e.g.
+  SLDGEN_API_HOST=loopback,tailscale,lan"
+      ;;
+  esac
+  resolved="$(expand_host_token "$entry")"
+  [ -n "$resolved" ] || die "SLDGEN_API_HOST token '$entry' did not resolve to an address.
+  For 'tailscale', check \`tailscale status\`. For 'lan', check \`ip -4 -o addr show scope global\`."
+  case ",$resolved_hosts," in
+    *",$resolved,"*) continue ;;   # already listed
+  esac
+  resolved_hosts="${resolved_hosts:+$resolved_hosts,}$resolved"
+done
+[ -n "$resolved_hosts" ] || die "SLDGEN_API_HOST is empty."
+API_HOST="$resolved_hosts"
+
+# The first address is "the" one: what the health check polls and what the
+# banner offers as a link.
+API_HOST_PRIMARY="${API_HOST%%,*}"
 
 mkdir -p "$WORK_ROOT" "$RUN_DIR"
 
@@ -156,7 +220,7 @@ tmux set-option -p -t "$SESSION:service.0" remain-on-exit on
 tmux set-option -p -t "$SESSION:service.1" remain-on-exit on
 
 tmux select-pane -t "$SESSION:service.0" -T "worker (GPU queue)"
-tmux select-pane -t "$SESSION:service.1" -T "api  http://$API_HOST:$API_PORT"
+tmux select-pane -t "$SESSION:service.1" -T "api  $(url_for "$API_HOST_PRIMARY")"
 tmux select-pane -t "$SESSION:service.2" -T "shell"
 tmux set-option -t "$SESSION" pane-border-status top 2>/dev/null || true
 tmux select-pane -t "$SESSION:service.2"
@@ -166,7 +230,7 @@ tmux select-pane -t "$SESSION:service.2"
 printf '==> waiting for the API'
 health=""
 for _ in $(seq 1 60); do
-  if health="$(curl -fsS "http://$API_HOST:$API_PORT/api/health" 2>/dev/null)"; then
+  if health="$(curl -fsS "$(url_for "$API_HOST_PRIMARY")/api/health" 2>/dev/null)"; then
     break
   fi
   printf '.'
@@ -183,11 +247,17 @@ fi
 
 worker_alive=$(printf '%s' "$health" | grep -o '"worker_alive":[^,}]*' | cut -d: -f2)
 
+web_urls=""
+IFS=',' read -ra listed_hosts <<< "$API_HOST"
+for listed in "${listed_hosts[@]}"; do
+  web_urls="${web_urls}    Web UI      $(url_for "$listed")"$'\n'
+done
+
 cat <<BANNER
 
   SLDgen is running.
 
-    Web UI      http://$API_HOST:$API_PORT
+${web_urls%$'\n'}
     Work root   $WORK_ROOT
     Worker      $([ "$worker_alive" = "true" ] && echo "up" || echo "NOT UP -- see the top pane")
 

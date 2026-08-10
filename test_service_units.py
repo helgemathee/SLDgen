@@ -575,6 +575,87 @@ def test_settings():
         shutil.rmtree(config.root, ignore_errors=True)
 
 
+# -- bind addresses --------------------------------------------------------
+
+
+def load_api_main():
+    """Import ``sldgen_api/__main__.py`` without importing the package.
+
+    ``sldgen_api/__init__.py`` pulls in FastAPI, which this file promises not to
+    need. The bind logic has no such dependency, so load the module by path.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "sldgen_api" / "__main__.py"
+    spec = importlib.util.spec_from_file_location("sldgen_api_main_undertest", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_bind_addresses():
+    """The API serves a comma-separated address list, and never a wildcard.
+
+    The bind address is the only access control this service has, so the
+    wildcard guard is a security property, not a nicety.
+    """
+    import socket
+
+    api_main = load_api_main()
+    ok = True
+
+    parsed = api_main.resolve_hosts("127.0.0.1, 10.0.0.5 ,192.168.1.9")
+    ok = check(
+        "bind/list", parsed == ["127.0.0.1", "10.0.0.5", "192.168.1.9"], str(parsed)
+    ) and ok
+
+    # Order is what makes hosts[0] usable as "the" address in banners.
+    deduped = api_main.resolve_hosts("127.0.0.1,10.0.0.5,127.0.0.1")
+    ok = check("bind/dedupe-keeps-order", deduped == ["127.0.0.1", "10.0.0.5"], str(deduped)) and ok
+
+    for wildcard in ("0.0.0.0", "::", "*", "127.0.0.1,0.0.0.0"):
+        refused = False
+        try:
+            api_main.resolve_hosts(wildcard)
+        except SystemExit:
+            refused = True
+        ok = check(f"bind/refuse-{wildcard}", refused) and ok
+
+    for empty in ("", "  ", " , "):
+        refused = False
+        try:
+            api_main.resolve_hosts(empty)
+        except SystemExit:
+            refused = True
+        ok = check(f"bind/refuse-empty-{empty!r}", refused) and ok
+
+    ok = check("bind/default-is-loopback", api_main.DEFAULT_HOST == "127.0.0.1") and ok
+
+    # A real bind, on a port the OS picks, proves the socket is listening and
+    # inheritable rather than merely constructed.
+    sock = api_main.bind("127.0.0.1", 0)
+    try:
+        port = sock.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port), timeout=2)
+        client.close()
+        ok = check("bind/socket-listens", True) and ok
+    except OSError as exc:
+        ok = check("bind/socket-listens", False, str(exc)) and ok
+    finally:
+        sock.close()
+
+    # An address this machine does not have must name itself in the error --
+    # that is the difference between a tailnet being down and a mystery.
+    failed = ""
+    try:
+        api_main.bind("10.99.99.99", 0)
+    except SystemExit as exc:
+        failed = str(exc)
+    ok = check("bind/unavailable-names-the-address", "10.99.99.99" in failed, failed[:60]) and ok
+
+    return ok
+
+
 def main():
     tests = (
         test_params_round_trip,
@@ -590,6 +671,7 @@ def main():
         test_log_cooking_and_ranges,
         test_disk_accounting,
         test_settings,
+        test_bind_addresses,
     )
     ok = True
     for test in tests:

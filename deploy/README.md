@@ -35,9 +35,21 @@ sudo systemctl enable --now sldgen-worker sldgen-api
 curl -s http://127.0.0.1:8765/api/health
 ```
 
-Edit `SLDGEN_API_HOST` in `sldgen-api.service` to the tailnet address before
-exposing it. The API has no authentication, so the bind address is the access
-control; it refuses to start on `0.0.0.0`.
+Edit `SLDGEN_API_HOST` in `sldgen-api.service` before exposing it. The API has
+no authentication, so the bind address is the access control; it refuses to
+start on `0.0.0.0`. It takes a comma-separated list and serves all of the
+addresses from one process on one port:
+
+```ini
+Environment=SLDGEN_API_HOST=127.0.0.1,100.93.68.60,192.168.178.101
+```
+
+The `loopback` / `tailscale` / `lan` tokens that `start.sh` understands are a
+shell convenience and are **not** expanded here — a unit file needs literal
+addresses. That means a changed DHCP lease or tailnet address is an edit; the
+unit's `Restart=always` will otherwise loop on "cannot bind", which is what
+`journalctl -u sldgen-api` will say. Since `tailscale0` can appear after
+`network-online.target`, a restart or two at boot is normal.
 
 ## Running it without systemd
 
@@ -66,7 +78,7 @@ the root.
 | `SLDGEN_CLAIM_INTERVAL` | `2.0` | how long the worker sleeps on an empty queue |
 | `SLDGEN_GRACE_SECONDS` | `120` | SIGTERM → SIGKILL grace for a segment |
 | `SLDGEN_CHECKPOINT_INTERVAL` | `200` | default periodic checkpoint for new jobs |
-| `SLDGEN_API_HOST` / `SLDGEN_API_PORT` | `127.0.0.1` / `8765` | API bind address |
+| `SLDGEN_API_HOST` / `SLDGEN_API_PORT` | `127.0.0.1` / `8765` | API bind addresses (comma-separated) and port |
 
 `SLDGEN_PYTHON` and `SLDGEN_SCRIPT` exist so the worker's supervision logic can
 be tested against a stub instead of a 15-minute GPU run; they are not something

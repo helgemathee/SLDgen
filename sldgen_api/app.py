@@ -1,7 +1,7 @@
 """The API application (Spec 2 SS12).
 
-Single user, no authentication, bound to the tailnet -- never 0.0.0.0 (see
-``__main__``). Every endpoint is thin: it validates, calls into
+Single user, no authentication, bound to named addresses (tailnet and/or LAN)
+-- never 0.0.0.0 (see ``__main__``). Every endpoint is thin: it validates, calls into
 ``sldgen_service``, and serialises. The rules about what may change and when live
 in ``sldgen_service.store`` and ``sldgen_service.params``, so the worker enforces
 exactly the same ones.
