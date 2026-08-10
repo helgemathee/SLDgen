@@ -25,7 +25,6 @@ describe('ringGeometry', () => {
       numIter: 4000,
     })
     expect(geometry.leadingAngle).toBeLessThan(geometry.tickAngle)
-    expect(geometry.animated).toBe(true)
   })
 
   it('fills the ring for a complete job regardless of rounding', () => {

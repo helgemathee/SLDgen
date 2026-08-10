@@ -38,8 +38,6 @@ export interface RingGeometry {
   leadingAngle: number
   strokeDash: string | undefined
   colorVar: string
-  /** True while the arc should advance continuously (real progress, SS3). */
-  animated: boolean
   opacity: number
 }
 
@@ -77,7 +75,6 @@ export function ringGeometry(input: RingInput): RingGeometry {
     // Paused is the same colour as queued, so the dash is what distinguishes it.
     strokeDash: input.state === 'paused' ? '2 2' : undefined,
     colorVar: COLOR_BY_STATE[input.state],
-    animated: input.state === 'running',
     opacity: input.state === 'deleting' ? 0.3 : 1,
   }
 }

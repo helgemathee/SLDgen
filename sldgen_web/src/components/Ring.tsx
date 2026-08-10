@@ -43,11 +43,11 @@ export function Ring({ size = 20, ...input }: RingInput & { size?: number }) {
         strokeWidth={input.state === 'waiting' ? 3 : 2.5}
         strokeDasharray={geometry.strokeDash ?? geometry.dashArray}
         strokeLinecap="butt"
+        // The arc advances with real progress and nothing else: no idle spin.
+        // A rotation here would also have to fight this attribute, since a CSS
+        // transform-origin composes with rotate()'s own centre and pivots the
+        // arc off the ring entirely.
         transform={`rotate(-90 ${center} ${center})`}
-        className={geometry.animated ? 'spin' : undefined}
-        // A running job's arc advances with real progress; the slow rotation is
-        // the only continuous motion in the interface and it means "on the GPU".
-        style={geometry.animated ? { transformOrigin: '50% 50%' } : undefined}
       />
       {/* Where this run is headed. Sitting at the arc's leading edge is what
           "complete against its budget, incomplete against the horizon" looks

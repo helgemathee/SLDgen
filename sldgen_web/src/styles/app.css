@@ -1261,21 +1261,5 @@ a {
   max-width: 70vw;
 }
 
-/* Motion: almost none (SS3). The running indicator advances continuously
- * because it encodes real progress; nothing else moves. */
-.spin {
-  animation: spin 1.8s linear infinite;
-  transform-origin: 50% 50%;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation: none;
-  }
-}
+/* Motion: none (SS3). The progress ring advances because real progress
+ * advanced it; there is no idle animation anywhere in the interface. */
