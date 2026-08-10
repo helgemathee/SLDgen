@@ -80,26 +80,11 @@ export function Filmstrip({
         )}
       </div>
 
-      <div className="filmstrip__track" ref={track}>
-        {frames.frames.map((frame, position) => (
-          <figure
-            key={frame.epoch}
-            className={`filmstrip__frame${starred.has(frame.epoch) ? ' filmstrip__frame--starred' : ''}`}
-            aria-current={position === index}
-            onClick={() => {
-              onPlaying(false)
-              onIndex(position)
-            }}
-            role="button"
-            tabIndex={-1}
-          >
-            <img src={frame.png_url} alt={`epoch ${frame.epoch}`} loading="lazy" />
-            {starred.has(frame.epoch) && <span className="filmstrip__star">★</span>}
-            <figcaption>{frame.epoch}</figcaption>
-          </figure>
-        ))}
-      </div>
-
+      {/* Above the sheet, not below it: the slider drives the artwork at the top
+        * of the page, and on a laptop screen the sheet is tall enough to push a
+        * scrubber under it off-screen -- leaving you dragging one thing while
+        * watching another you cannot see. Everything here acts on the selected
+        * frame, so the buttons travel with the slider rather than staying put. */}
       <div className="filmstrip__controls">
         <button
           type="button"
@@ -154,6 +139,26 @@ export function Filmstrip({
             </a>
           </>
         )}
+      </div>
+
+      <div className="filmstrip__track" ref={track}>
+        {frames.frames.map((frame, position) => (
+          <figure
+            key={frame.epoch}
+            className={`filmstrip__frame${starred.has(frame.epoch) ? ' filmstrip__frame--starred' : ''}`}
+            aria-current={position === index}
+            onClick={() => {
+              onPlaying(false)
+              onIndex(position)
+            }}
+            role="button"
+            tabIndex={-1}
+          >
+            <img src={frame.png_url} alt={`epoch ${frame.epoch}`} loading="lazy" />
+            {starred.has(frame.epoch) && <span className="filmstrip__star">★</span>}
+            <figcaption>{frame.epoch}</figcaption>
+          </figure>
+        ))}
       </div>
 
       {favorites.length > 0 && (

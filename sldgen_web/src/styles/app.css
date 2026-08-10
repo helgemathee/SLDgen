@@ -713,12 +713,13 @@ a {
   border-color: var(--rule-strong);
 }
 
+/* Follows the track, so it needs its own top padding to clear the dark edge. */
 .filmstrip__favorites {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 0 10px 8px;
+  padding: 8px 10px;
 }
 
 .btn--starred {
