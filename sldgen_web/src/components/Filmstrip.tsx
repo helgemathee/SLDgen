@@ -134,10 +134,30 @@ export function Filmstrip({
             >
               svg
             </a>
-            <a className="btn btn--small" href={current.svg_url} download>
-              ↓
+            <a
+              className="btn btn--small"
+              href={current.svg_url}
+              download={`${frames.job_id}_epoch_${String(current.epoch).padStart(4, '0')}.svg`}
+              title={`Download epoch ${current.epoch} as SVG`}
+            >
+              ↓ svg
             </a>
           </>
+        )}
+        {/* The PNG is what you are actually looking at, and it is the thing you
+          * paste into a message or a slide -- so it deserves the same one click
+          * as the SVG rather than a right-click on the contact sheet. Named by
+          * epoch, like the starred archive: once four of these are in ~/Downloads
+          * `iter_0200.png` says nothing about which job it came from. */}
+        {current?.png_url && (
+          <a
+            className="btn btn--small"
+            href={current.png_url}
+            download={`${frames.job_id}_epoch_${String(current.epoch).padStart(4, '0')}.png`}
+            title={`Download epoch ${current.epoch} as PNG`}
+          >
+            ↓ png
+          </a>
         )}
       </div>
 
