@@ -77,6 +77,17 @@ PARAM_SPECS = (
     ParamSpec("attract", "--attract", "path_list", STRUCTURAL, None),
     ParamSpec("attraction_weight", "--attraction-weight", "float", STRUCTURAL, 0.004),
     ParamSpec("attraction_distance", "--attraction-distance", "float", STRUCTURAL, 25.0),
+    #: Canny-derived attraction. Unlike `attract`, this needs no input file: the
+    #: run generates its own SVG from the target once canvas space exists, and
+    #: leaves it in the run directory as `attract_canny.svg`. So it is an
+    #: ordinary parameter, not an input role.
+    ParamSpec("attract_canny", "--attract-canny", "true_flag", STRUCTURAL, False),
+    ParamSpec("attract_canny_low", "--attract-canny-low", "float", STRUCTURAL, 100.0),
+    ParamSpec("attract_canny_high", "--attract-canny-high", "float", STRUCTURAL, 200.0),
+    ParamSpec("attract_canny_blur", "--attract-canny-blur", "int", STRUCTURAL, 3),
+    ParamSpec("attract_canny_simplify", "--attract-canny-simplify", "float", STRUCTURAL, 1.0),
+    ParamSpec("attract_canny_min_length", "--attract-canny-min-length", "float", STRUCTURAL, 12.0),
+    ParamSpec("attract_canny_max_points", "--attract-canny-max-points", "int", STRUCTURAL, 400),
     ParamSpec("init_points", "--init-points", "path", STRUCTURAL, None),
     ParamSpec("stipple_weight", "--stipple-weight", "path", STRUCTURAL, None),
     ParamSpec("stipple_weight_mode", "--stipple-weight-mode", "str", STRUCTURAL, "multiply"),
@@ -207,6 +218,16 @@ def validate_params(params):
     for name in ("init_points", "stipple_weight"):
         if params[name] is not None and params["init_method"] != "tsp":
             raise ParamError(f"{name} is only supported with init_method 'tsp'")
+
+    # Mirrors SLDgen/config.py. Checked here too so the job is refused at
+    # submission rather than by a worker that has already claimed a slot.
+    if params["attract_canny"]:
+        if params["attract_canny_low"] >= params["attract_canny_high"]:
+            raise ParamError("attract_canny_low must be below attract_canny_high")
+        if params["attract_canny_max_points"] < 2:
+            raise ParamError("attract_canny_max_points must be at least 2")
+        if params["attract_canny_blur"] < 0:
+            raise ParamError("attract_canny_blur must be 0 (disabled) or positive")
 
     return params
 

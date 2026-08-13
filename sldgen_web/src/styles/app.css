@@ -914,6 +914,20 @@ a {
   opacity: 0.45;
 }
 
+/* Six short numeric knobs that belong to one preview. Stacked at the standard
+ * 168px label column they push the trace they are meant to explain off-screen,
+ * which defeats the point of previewing at all. */
+.grid-knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 var(--gap);
+  margin: var(--gap-sm) 0;
+}
+
+.grid-knobs .field {
+  grid-template-columns: 110px 1fr;
+}
+
 .group {
   border: 1px solid var(--rule);
   background: var(--paper-raised);

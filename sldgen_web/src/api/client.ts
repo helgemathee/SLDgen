@@ -2,6 +2,7 @@ import type {
   CleanupResult,
   DiskReport,
   FavoritesResponse,
+  CannyPreview,
   FramesResponse,
   Health,
   JobDetail,
@@ -140,6 +141,9 @@ export const api = {
 
   cleanup: (body: Record<string, unknown>) =>
     request<CleanupResult>('/api/maintenance/cleanup', json(body)),
+
+  cannyPreview: (body: Record<string, unknown>) =>
+    request<CannyPreview>('/api/canny/preview', json(body)),
 
   partitionPreview: (body: Record<string, unknown>) =>
     request<PartitionPreview>('/api/partitions/preview', json(body)),

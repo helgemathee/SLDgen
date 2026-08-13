@@ -33,6 +33,7 @@ from sldgen_service.params import (
 )
 from sldgen_service.store import Store, StoreError
 
+from . import canny as canny_utils
 from . import partitions as partition_utils
 from .streaming import sse, stream_zip
 
@@ -924,6 +925,50 @@ def create_app(config=None):
                 f"systemd-journal group.\n{completed.stderr}"
             )
         return completed.stdout
+
+    # -- canny attraction preview -------------------------------------------
+
+    @app.post("/api/canny/preview")
+    def canny_preview(body: dict = Body(...)):
+        """Preview what --attract-canny would generate, from a previous run's canvas.
+
+        Takes ``source_job_id`` or ``target_sha256``; with the latter the newest
+        run of that target that has an ``input.png`` is used, because that file
+        is the canvas-space image the next run will reproduce.
+        """
+        source_job_id = body.get("source_job_id")
+        if not source_job_id:
+            target = body.get("target_sha256")
+            if not target:
+                raise HTTPException(400, "source_job_id or target_sha256 is required")
+            source_job_id = canny_utils.find_source_job(store, config, target)
+            if source_job_id is None:
+                raise HTTPException(
+                    404,
+                    "no previous run of this image has reached target preprocessing, so "
+                    "there is no canvas to preview against yet. The run will still "
+                    "generate its own edges.",
+                )
+        else:
+            require_job(source_job_id)
+
+        try:
+            result = canny_utils.run_preview(config, source_job_id, dict(body.get("params") or {}))
+        except canny_utils.CannyError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            **result,
+            "svg_url": f"/api/canny/preview/{source_job_id}.svg",
+            "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png",
+        }
+
+    @app.get("/api/canny/preview/{source_job_id}.svg")
+    def canny_preview_svg(source_job_id: str):
+        try:
+            path = canny_utils.preview_svg(config, source_job_id)
+        except canny_utils.CannyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return FileResponse(path, media_type="image/svg+xml")
 
     # -- partitions ---------------------------------------------------------
 

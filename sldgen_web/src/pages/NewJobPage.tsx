@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { JobSummary, ParamValue, Partition, UploadResult } from '../api/types'
+import { CannyPanel } from '../components/CannyPanel'
 import { ConstraintPicker } from '../components/ConstraintPicker'
 import { ParamFields } from '../components/ParamFields'
 import { PrepCanvas, type PrepCanvasHandle } from '../components/PrepCanvas'
@@ -21,6 +22,17 @@ import { useApp } from '../state/store'
 
 const SECTIONS: ParamSection[] = ['prompt', 'curve', 'guidance', 'losses']
 const INPUT_ROLES = ['avoid', 'attract', 'init_points', 'stipple_weight'] as const
+
+/** Owned by CannyPanel, which shows them next to the trace they produce. */
+const CANNY_PARAMS = [
+  'attract_canny',
+  'attract_canny_low',
+  'attract_canny_high',
+  'attract_canny_blur',
+  'attract_canny_simplify',
+  'attract_canny_min_length',
+  'attract_canny_max_points',
+]
 
 /**
  * The new-job flow (Spec 3 SS8).
@@ -376,10 +388,19 @@ export function NewJobPage() {
               />
             ))}
 
+            {/* Its own panel rather than six more number fields: the knobs are
+                meaningless without seeing what they trace. */}
+            <CannyPanel
+              params={form.params}
+              targetSha256={upload?.sha256 ?? null}
+              onChange={setParam}
+            />
+
             <ParamFields
               params={form.params}
               sections={['constraints']}
               collapsed={[]}
+              hide={CANNY_PARAMS}
               onChange={setParam}
             />
           </div>

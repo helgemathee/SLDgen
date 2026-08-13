@@ -7,6 +7,8 @@ import numpy as np
 import pydiffvg
 import torch
 
+from . import canny_attract
+
 
 def set_output_directories(args):
     """Set up output directories based on the target image and experiment name."""
@@ -318,6 +320,66 @@ def parse_arguments(custom_args=None):
         ),
     )
 
+    # Canny-derived attraction (opt-in). Generates the attract SVG from the
+    # target's own edges during the run and adds it to whatever --attract already
+    # supplies. The natural pairing is --condition depth (volume, from SDS) with
+    # this (features, from geometry). When unset, nothing in this group runs.
+    parser.add_argument(
+        "--attract-canny",
+        action="store_true",
+        help=(
+            "Optional. Derive attraction targets from a Canny edge map of the "
+            "target and pull the curve onto them. The edges are computed after "
+            "the mask/rescale, so they are in canvas space by construction; the "
+            "SVG is written to the output directory as attract_canny.svg. Adds "
+            "to --attract rather than replacing it. Uses --attraction-weight and "
+            "--attraction-distance like any other attract source."
+        ),
+    )
+    parser.add_argument(
+        "--attract-canny-low",
+        type=float,
+        default=canny_attract.DEFAULT_LOW,
+        help="Canny low threshold for --attract-canny (SLDgen's ControlNet value: 100).",
+    )
+    parser.add_argument(
+        "--attract-canny-high",
+        type=float,
+        default=canny_attract.DEFAULT_HIGH,
+        help="Canny high threshold for --attract-canny (SLDgen's ControlNet value: 200).",
+    )
+    parser.add_argument(
+        "--attract-canny-blur",
+        type=int,
+        default=3,
+        help=(
+            "Gaussian kernel applied before Canny (odd, 0 disables). On portraits "
+            "this is what stops hair and fabric texture from consuming the budget."
+        ),
+    )
+    parser.add_argument(
+        "--attract-canny-simplify",
+        type=float,
+        default=1.0,
+        help="Douglas-Peucker tolerance in canvas pixels for the traced contours (0 disables).",
+    )
+    parser.add_argument(
+        "--attract-canny-min-length",
+        type=float,
+        default=12.0,
+        help="Drop traced contours shorter than this many canvas pixels (speckle).",
+    )
+    parser.add_argument(
+        "--attract-canny-max-points",
+        type=int,
+        default=400,
+        help=(
+            "Budget for the generated attract points. The attraction loss sums "
+            "its coverage term over every target, so an unbudgeted edge map "
+            "buries the SDS gradient. Keep at or below --n-control-points."
+        ),
+    )
+
     # Init-from-SVG (opt-in). Seed the TSP tour from a provided SVG's points
     # instead of stippling the target image. Pairs with --attract: the partition
     # becomes the starting curve and attraction keeps it aligned as SDS refines.
@@ -483,6 +545,20 @@ def parse_arguments(custom_args=None):
         for svg_path in args.attract:
             if not Path(svg_path).exists():
                 parser.error(f"--attract SVG file does not exist: {svg_path}")
+
+    # Validate the opt-in --attract-canny feature. Its knobs are inert without
+    # it, so a value set on its own is a mistake worth naming rather than a
+    # setting that quietly does nothing.
+    if args.attract_canny:
+        if args.attract_canny_low >= args.attract_canny_high:
+            parser.error(
+                "--attract-canny-low must be below --attract-canny-high; got "
+                f"{args.attract_canny_low} and {args.attract_canny_high}."
+            )
+        if args.attract_canny_max_points < 2:
+            parser.error("--attract-canny-max-points must be at least 2.")
+        if args.attract_canny_blur < 0:
+            parser.error("--attract-canny-blur must be 0 (disabled) or positive.")
 
     # Validate the opt-in --init-points feature. Default (None) keeps behavior
     # unchanged. Only meaningful for the TSP initializer.

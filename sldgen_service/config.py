@@ -43,6 +43,10 @@ class ServiceConfig:
     sldgen_python: Path
     sldgen_script: Path
     partition_script: Path
+    #: Defaulted, unlike its siblings, because it is only ever the repo's own
+    #: script: nothing about a deployment changes it, and a test building a
+    #: config by hand should not have to know it exists.
+    canny_script: Path = REPO_ROOT / "sld_canny_svg.py"
     #: How often the worker re-reads a running segment's state.json (Spec 2 SS7:
     #: poll, don't watch -- no inotify watch limits, and it survives the atomic
     #: replace that writing state.json uses).
@@ -64,6 +68,7 @@ class ServiceConfig:
             sldgen_python=_env_path("SLDGEN_PYTHON", DEFAULT_SLDGEN_PYTHON),
             sldgen_script=_env_path("SLDGEN_SCRIPT", REPO_ROOT / "sldgen.py"),
             partition_script=_env_path("SLDGEN_PARTITION_SCRIPT", REPO_ROOT / "sld_partition.py"),
+            canny_script=_env_path("SLDGEN_CANNY_SCRIPT", REPO_ROOT / "sld_canny_svg.py"),
             poll_interval=_env_float("SLDGEN_POLL_INTERVAL", 1.0),
             claim_interval=_env_float("SLDGEN_CLAIM_INTERVAL", 2.0),
             grace_seconds=_env_float("SLDGEN_GRACE_SECONDS", 120.0),

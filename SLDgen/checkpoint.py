@@ -75,6 +75,16 @@ STRUCTURAL_FIELDS = (
     "avoidance_distance",
     "attraction_weight",
     "attraction_distance",
+    # --attract-canny generates an SVG inside the run, so the generated path is
+    # not what identifies it -- these settings are. Canny is deterministic, so
+    # two segments that agree on them produce identical attract points.
+    "attract_canny",
+    "attract_canny_low",
+    "attract_canny_high",
+    "attract_canny_blur",
+    "attract_canny_simplify",
+    "attract_canny_min_length",
+    "attract_canny_max_points",
     "repulsion_loss_weight",
     "sparse_loss_weight",
     "sparse_loss_type",

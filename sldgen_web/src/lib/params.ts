@@ -111,6 +111,13 @@ export const PARAM_SPECS: ParamSpec[] = [
   { name: 'attract', kind: 'path_list', group: 'structural', section: 'constraints', default: null, label: 'Attract', optional: true, viaInput: true },
   { name: 'attraction_weight', kind: 'float', group: 'structural', section: 'constraints', default: 0.004, label: 'Attraction weight', step: 0.001 },
   { name: 'attraction_distance', kind: 'float', group: 'structural', section: 'constraints', default: 25.0, label: 'Attraction distance' },
+  { name: 'attract_canny', kind: 'true_flag', group: 'structural', section: 'constraints', default: false, label: 'Attract to Canny edges', hint: 'The run derives an edge map from the target and pulls the curve onto it. Generated in canvas space during the run and saved as attract_canny.svg; adds to any Attract files above.' },
+  { name: 'attract_canny_low', kind: 'float', group: 'structural', section: 'constraints', default: 100.0, label: 'Canny low' },
+  { name: 'attract_canny_high', kind: 'float', group: 'structural', section: 'constraints', default: 200.0, label: 'Canny high' },
+  { name: 'attract_canny_blur', kind: 'int', group: 'structural', section: 'constraints', default: 3, label: 'Canny blur', min: 0, hint: 'Odd kernel, 0 disables. Raise it on portraits so hair texture does not eat the budget.' },
+  { name: 'attract_canny_simplify', kind: 'float', group: 'structural', section: 'constraints', default: 1.0, label: 'Canny simplify', step: 0.5, min: 0 },
+  { name: 'attract_canny_min_length', kind: 'float', group: 'structural', section: 'constraints', default: 12.0, label: 'Canny min length', min: 0 },
+  { name: 'attract_canny_max_points', kind: 'int', group: 'structural', section: 'constraints', default: 400, label: 'Canny max points', min: 2, hint: 'Keep at or below the control-point count: the attraction loss sums over every target.' },
   { name: 'init_points', kind: 'path', group: 'structural', section: 'constraints', default: null, label: 'Init points', optional: true, viaInput: true },
   { name: 'stipple_weight', kind: 'path', group: 'structural', section: 'constraints', default: null, label: 'Stipple weight', optional: true, viaInput: true },
   { name: 'stipple_weight_mode', kind: 'str', group: 'structural', section: 'constraints', default: 'multiply', label: 'Stipple weight mode', choices: ['multiply', 'replace'] },
@@ -230,6 +237,14 @@ export function validateParams(params: Params): string[] {
     const pair = params.origin as number[]
     if (!pair.every((value) => value >= 0 && value <= 1))
       problems.push('Origin coordinates must be between 0 and 1.')
+  }
+
+  if (params.attract_canny) {
+    if (num('attract_canny_low') >= num('attract_canny_high'))
+      problems.push('Canny low must be below Canny high.')
+    if (num('attract_canny_max_points') < 2)
+      problems.push('Canny max points must be at least 2.')
+    if (num('attract_canny_blur') < 0) problems.push('Canny blur cannot be negative.')
   }
 
   for (const name of ['init_points', 'stipple_weight']) {

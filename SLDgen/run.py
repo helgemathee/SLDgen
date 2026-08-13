@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 
 from .avoidance import avoidance_loss
 from .attraction import attraction_loss
+from . import canny_attract
 from .checkpoint import (
     GracefulStop,
     assert_fingerprint_matches,
@@ -139,6 +140,37 @@ def run(args):
 
     # Set up input, renderer and optimizer
     inputs, mask = get_target(args)
+
+    # Canny-derived attraction (opt-in). This is the only point in the program
+    # where canvas space exists as an image: get_target has just applied the
+    # mask, the square pad, the resize and the --object-size-ratio rescale, and
+    # the painter below is about to load attract points in exactly that frame.
+    # Deriving the edges anywhere else means reproducing that pipeline or
+    # misregistering silently, which is why the whole feature lives here.
+    #
+    # The generated path is NOT appended to args.attract: that field is part of
+    # the structural fingerprint, which is computed above from the parsed
+    # arguments and again when a checkpoint is written. Mutating it here would
+    # make a resumed segment disagree with the one that saved the checkpoint.
+    # --attract-canny and its knobs are fingerprinted instead, which pins the
+    # generated geometry just as tightly (Canny is deterministic).
+    args.attract_canny_svg = None
+    if args.attract_canny:
+        stats = canny_attract.generate(
+            args.input_image,
+            Path(args.output_dir) / "attract_canny.svg",
+            mask=args.mask,
+            low=args.attract_canny_low,
+            high=args.attract_canny_high,
+            blur=args.attract_canny_blur,
+            simplify=args.attract_canny_simplify,
+            min_length=args.attract_canny_min_length,
+            max_points=args.attract_canny_max_points,
+        )
+        args.attract_canny_svg = stats["path"]
+        print(f"\tCanny attraction: {canny_attract.describe(stats)}", flush=True)
+        print(f"\t\tWrote attract_canny.svg (canvas space at {args.render_size}px).", flush=True)
+
     renderer = SLDBSplinePainter(args=args, device=args.device, mask=mask)
     renderer = renderer.to(args.device)
     optimizer = PainterOptimizer(args, renderer)

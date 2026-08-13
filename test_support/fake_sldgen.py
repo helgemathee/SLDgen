@@ -75,7 +75,81 @@ def parse_args():
     parser.add_argument("--caption", default="")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no-video", action="store_false", dest="save_video")
+    parser.add_argument("--render-size", type=int, default=512)
+    # Canny attraction. The fake runs the *real* SLDgen/canny_attract.py here
+    # rather than faking its output: that module needs only cv2/numpy, the SVG
+    # it produces is what the service and UI consume, and a stub of it would
+    # test the plumbing against a file the real run never writes.
+    parser.add_argument("--attract-canny", action="store_true")
+    parser.add_argument("--attract-canny-low", type=float, default=100.0)
+    parser.add_argument("--attract-canny-high", type=float, default=200.0)
+    parser.add_argument("--attract-canny-blur", type=int, default=3)
+    parser.add_argument("--attract-canny-simplify", type=float, default=1.0)
+    parser.add_argument("--attract-canny-min-length", type=float, default=12.0)
+    parser.add_argument("--attract-canny-max-points", type=int, default=400)
     return parser.parse_known_args()[0]
+
+
+def write_canvas_images(run_dir, target, render_size):
+    """Stand in for ``targets.get_target``: the canvas-space image and its mask.
+
+    The real run writes these before anything else, and three features read them
+    back -- the labelmap partition default, the artwork pane, and the Canny
+    preview -- so a fake that skips them cannot exercise any of those. Real
+    pixels when PIL is available, placeholder bytes when it is not, because the
+    supervision tests must keep running in an interpreter with no image stack.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        (run_dir / "input.png").write_bytes(b"\x89PNG\r\n\x1a\n(input)")
+        (run_dir / "mask.png").write_bytes(b"\x89PNG\r\n\x1a\n(mask)")
+        return False
+
+    source = Image.open(target).convert("RGB") if Path(target).exists() else None
+    canvas = Image.new("RGB", (render_size, render_size), (255, 255, 255))
+    if source is not None:
+        # Same shape as the real pipeline: fit the subject into the canvas
+        # centred, which is what makes the coordinates canvas space.
+        scaled = source.copy()
+        scaled.thumbnail((int(render_size * 0.75), int(render_size * 0.75)))
+        canvas.paste(
+            scaled,
+            ((render_size - scaled.width) // 2, (render_size - scaled.height) // 2),
+        )
+    canvas.save(run_dir / "input.png")
+
+    mask = Image.new("L", (render_size, render_size), 0)
+    inset = int(render_size * 0.1)
+    mask.paste(255, (inset, inset, render_size - inset, render_size - inset))
+    mask.save(run_dir / "mask.png")
+    return True
+
+
+def write_attract_canny(run_dir, args):
+    """Run the real generator, exactly where ``run.run`` runs it."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from PIL import Image
+
+        from SLDgen.canny_attract import describe, generate
+    except ImportError as error:
+        print(f"fake sldgen: --attract-canny needs cv2/numpy/PIL ({error})", flush=True)
+        return None
+
+    stats = generate(
+        Image.open(run_dir / "input.png"),
+        run_dir / "attract_canny.svg",
+        mask=Image.open(run_dir / "mask.png"),
+        low=args.attract_canny_low,
+        high=args.attract_canny_high,
+        blur=args.attract_canny_blur,
+        simplify=args.attract_canny_simplify,
+        min_length=args.attract_canny_min_length,
+        max_points=args.attract_canny_max_points,
+    )
+    print(f"\tCanny attraction: {describe(stats)}", flush=True)
+    return stats
 
 
 def utcnow():
@@ -141,6 +215,13 @@ def main():
     write_state(run_dir, epoch=max(start_epoch, 0), num_iter=args.num_iter, stop_at=stop_at,
                 phase="init", resolved_caption=caption, iters_per_sec=None,
                 latest_checkpoint=None, latest_preview=None)
+
+    # get_target runs on every segment, resumed or not, and so does the Canny
+    # generation that follows it -- which is what makes the generated SVG
+    # identical across segments rather than something only the first one has.
+    real_images = write_canvas_images(run_dir, args.target, args.render_size)
+    if args.attract_canny and real_images:
+        write_attract_canny(run_dir, args)
 
     if start_epoch < 0:
         # save_current_step writes the SVG *and* the PNG, at epoch 0 as at every

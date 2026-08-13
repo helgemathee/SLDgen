@@ -307,10 +307,18 @@ class SLDBSplinePainter(torch.nn.Module):
         # no-grad tensor, never added to parameters(); consumed only by the
         # attraction loss in the run loop. When --attract is unset this is None
         # and no attraction code path runs.
+        #
+        # --attract-canny contributes one more SVG here rather than being merged
+        # into args.attract, which is fingerprinted and must keep reading back
+        # exactly what the command line supplied (see run.run).
         self.attract_points = None
-        if getattr(self.args, "attract", None):
+        attract_sources = list(getattr(self.args, "attract", None) or [])
+        generated = getattr(self.args, "attract_canny_svg", None)
+        if generated:
+            attract_sources.append(generated)
+        if attract_sources:
             attract_np = load_attract_points(
-                self.args.attract, sample_spacing_px=2.0, render_size=self.canvas_width
+                attract_sources, sample_spacing_px=2.0, render_size=self.canvas_width
             )
             if attract_np is not None:
                 self.attract_points = torch.tensor(
@@ -318,7 +326,7 @@ class SLDBSplinePainter(torch.nn.Module):
                 )
                 print(
                     f"\t\tLoaded {len(self.attract_points)} attract points from "
-                    f"{len(self.args.attract)} SVG file(s) for the attraction constraint.",
+                    f"{len(attract_sources)} SVG file(s) for the attraction constraint.",
                     flush=True,
                 )
 

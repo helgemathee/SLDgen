@@ -194,6 +194,20 @@ export interface Partition {
   preview?: string | null
 }
 
+/**
+ * What `--attract-canny` would generate, previewed against a previous run of the
+ * same image. `points` is the number that matters: it is compared against the
+ * control-point count, because the attraction loss sums over every target.
+ */
+export interface CannyPreview {
+  source_job_id: string
+  summary: string
+  points: number | null
+  bytes: number
+  svg_url: string
+  image_url: string
+}
+
 export interface PartitionPreview {
   source_job_id: string
   strategy: string
