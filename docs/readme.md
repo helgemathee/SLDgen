@@ -8,6 +8,7 @@ interface to SLDgen. Written to be implemented in order.
 | [1 — Core checkpointing](sldgen-spec-1-core.md) | `--stop-at`, `--resume`, `--checkpoint-interval`, non-destructive finalisation | nothing | ✅ complete (`4d30690`, 2026-08-09) |
 | [2 — Worker and service](sldgen-spec-2-worker.md) | job queue daemon, SQLite store, HTTP API | Spec 1 | ✅ complete (2026-08-09) |
 | [3 — Web UI](sldgen-spec-3-web-ui.md) | browser application | Spec 2 | not started |
+| [4 — Dual conditioning](sldgen-spec-4-dual-conditioning.md) | depth *and* canny in one run: `--condition-2`, `--condition-mode` | Specs 1–3 | 📝 design only, not started |
 
 Each completed spec ends with an **"As built"** section: what shipped, every
 place the implementation departed from the design and why, and what was
