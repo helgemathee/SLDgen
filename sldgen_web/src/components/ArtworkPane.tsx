@@ -5,7 +5,7 @@ import { formatBytes } from '../lib/format'
 import { ZOOM_STEP, actualSizeView, fitView, zoomCentered } from '../lib/zoom'
 import { previewSrc } from './JobThumb'
 
-export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition'
+export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition' | 'weight'
 
 interface Available {
   result: string | null
@@ -13,6 +13,7 @@ interface Available {
   input: string | null
   mask: string | null
   condition: string | null
+  weight: string | null
 }
 
 export function availableArtwork(job: JobDetail, frameUrl: string | null): Available {
@@ -21,12 +22,19 @@ export function availableArtwork(job: JobDetail, frameUrl: string | null): Avail
   const condition = job.artifacts.find((artifact) =>
     /^target\/run\/condition_\w+\.png$/.test(artifact.path),
   )
+  // The weight map is an *input*, not something the run produced, so it lives in
+  // inputs/ rather than target/run/. Shown raw, as painted: white is full ink,
+  // black is none. In multiply mode the field that actually seeds the stipple is
+  // this times the RMBG mask, and that product is never written to disk -- the
+  // Mask tab next to it is the other half.
+  const weight = job.inputs.find((input) => input.role === 'stipple_weight')
   return {
     result: run('final_sld.svg'),
     preview: frameUrl ?? (job.current_epoch > 0 ? previewSrc(job) : null),
     input: run('input.png'),
     mask: run('mask.png'),
     condition: condition ? fileUrl(job.id, condition.path) : null,
+    weight: weight ? fileUrl(job.id, `inputs/${weight.stored_path.split('/').pop()}`) : null,
   }
 }
 
@@ -44,6 +52,7 @@ const TAB_LABELS: Record<ArtworkTab, string> = {
   input: 'Input',
   mask: 'Mask',
   condition: 'Condition',
+  weight: 'Stipple weight',
 }
 
 /**

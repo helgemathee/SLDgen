@@ -299,8 +299,9 @@ export function PrepCanvas({
         pixels[index * 4 + 2] = pixels[index * 4 + 2] * (1 - 0.5 * coverage) + 255 * 0.5 * coverage
       }
       if (densityAvailable) {
-        // Show painted density as a red-free darkening, so it reads as "more
-        // ink here" without introducing decorative colour.
+        // Shade where the ink has been held back, so a suppressed area is
+        // visible without introducing decorative colour. Full density (1) is
+        // left alone, since that is the untouched state.
         const value = density.current[index]
         if (value < 0.999) {
           const tint = 1 - (1 - value) * 0.45
@@ -403,7 +404,8 @@ export function PrepCanvas({
       const weightContext = weightCanvas.getContext('2d')!
       const weightFrame = weightContext.createImageData(full.width, full.height)
       for (let index = 0; index < upsampled.length; index += 1) {
-        // Grayscale: darker means more ink, which is what --stipple-weight reads.
+        // Grayscale, in --stipple-weight's own convention (byte/255): white is
+        // full density, black is none.
         const value = upsampled[index]
         weightFrame.data[index * 4] = value
         weightFrame.data[index * 4 + 1] = value
@@ -458,7 +460,7 @@ export function PrepCanvas({
             disabled={!densityAvailable}
             title={
               densityAvailable
-                ? 'Paint darker where you want more ink'
+                ? 'Paint towards 1 for full ink, towards 0 to hold the ink back'
                 : 'Choose Guide or Control the ink to paint density'
             }
             onClick={() => setTool('density')}

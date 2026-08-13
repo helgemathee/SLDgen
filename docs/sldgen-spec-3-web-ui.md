@@ -200,6 +200,11 @@ Tabbed, defaulting to the most advanced artefact available:
 - **Input** — the prepared `input.png` as SLDgen received it.
 - **Mask** — `mask.png`, the RMBG result.
 - **Condition** — `condition_depth.png` or `condition_canny.png`.
+- **Stipple weight** — `inputs/stipple_weight.png` when the job has one, shown
+  raw as painted: white is full ink, black is none. Last in the strip because it
+  is the only tab that is not a run artefact and is usually absent. In multiply
+  mode the field that actually seeds the stipple is this times the RMBG mask,
+  and that product is never written to disk — the Mask tab is the other half.
 
 Toggling between Input, Mask and Result at the same zoom is how you diagnose a
 bad run, so all tabs share one pan/zoom state.
@@ -438,7 +443,10 @@ Three explicit modes, stated in the UI in plain terms:
 | **Control the ink** | also `weight.png` | `--stipple-weight … --stipple-weight-mode replace` | Your painting *is* the density field; RMBG no longer affects density (it still affects the bounding-box rescale) |
 
 The second and third modes turn the brush into a **density brush** — paint
-darker where you want more ink — which is a far better instrument than a binary
+towards 1 for full ink and towards 0 to hold it back, in `--stipple-weight`'s
+own convention, so the exported PNG is white where the ink goes. On the canvas
+the suppressed areas are the ones that shade over, since full density is the
+untouched state. A soft field like this is a far better instrument than a binary
 mask and is what the `--stipple-weight` flag was built for. The UI should offer
 the density brush as its own tool once a non-default mask mode is chosen.
 
