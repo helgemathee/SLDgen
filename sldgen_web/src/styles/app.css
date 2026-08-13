@@ -269,44 +269,6 @@ a {
   min-height: 0;
 }
 
-.rail__batch > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  padding: 6px var(--gap-sm);
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper-sunk);
-}
-
-.rail__batch > summary::-webkit-details-marker {
-  display: none;
-}
-
-.rail__batch > summary::before {
-  content: '▸';
-  color: var(--graphite);
-  font-size: 10px;
-}
-
-.rail__batch[open] > summary::before {
-  content: '▾';
-}
-
-.rail__batch-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--t-xs);
-  font-variation-settings: 'wdth' 112;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--graphite);
-}
-
 .row {
   display: grid;
   grid-template-columns: auto 44px 1fr auto;

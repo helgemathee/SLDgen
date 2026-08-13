@@ -77,7 +77,7 @@ export function ComparePage({ ids }: { ids: string[] }) {
       <div className="empty">
         <strong>Nothing selected.</strong>
         <span className="note">
-          Tick two or more jobs in the rail — or a batch heading — to compare them here.
+          Tick two or more jobs in the rail to compare them here.
         </span>
       </div>
     )

@@ -120,7 +120,7 @@ export function RunAgainDialog({
       toast(
         result.jobs.length === 1
           ? 'Queued one job.'
-          : `Queued ${result.jobs.length} jobs as one batch.`,
+          : `Queued ${result.jobs.length} jobs.`,
       )
       onQueued(result.jobs.map((created) => created.id))
     } catch (error) {

@@ -87,32 +87,3 @@ export function ringPoint(radius: number, degrees: number, center: number) {
     y: center + radius * Math.sin(radians),
   }
 }
-
-/** A batch's combined ring: one job's worth of progress, summed (SS6.6). */
-export function combinedRing(
-  jobs: { state: JobState; current_epoch: number; target_epoch: number; num_iter: number }[],
-): RingInput {
-  if (jobs.length === 0) {
-    return { state: 'queued', currentEpoch: 0, targetEpoch: 0, numIter: 1 }
-  }
-  const sum = (pick: (job: (typeof jobs)[number]) => number) =>
-    jobs.reduce((total, job) => total + pick(job), 0)
-  // The most urgent state present wins the colour, so a batch with one failure
-  // does not read as healthy.
-  const precedence: JobState[] = [
-    'failed',
-    'running',
-    'waiting',
-    'queued',
-    'paused',
-    'deleting',
-    'complete',
-  ]
-  const state = precedence.find((candidate) => jobs.some((job) => job.state === candidate))!
-  return {
-    state,
-    currentEpoch: sum((job) => job.current_epoch),
-    targetEpoch: sum((job) => job.target_epoch),
-    numIter: sum((job) => job.num_iter),
-  }
-}

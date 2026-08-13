@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import type { JobState, JobSummary } from '../api/types'
 import { JOB_STATES } from '../api/types'
 import { ERROR_COPY, formatAgo, formatDuration, jobLabel } from '../lib/format'
-import { combinedRing } from '../lib/ring'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 import { JobThumb } from './JobThumb'
@@ -45,30 +44,6 @@ export function filterJobs(
   return filtered
 }
 
-/** Group by batch, keeping ungrouped jobs in place (Spec 3 SS6.6). */
-export function groupByBatch(jobs: JobSummary[]): { batchId: string | null; jobs: JobSummary[] }[] {
-  const groups: { batchId: string | null; jobs: JobSummary[] }[] = []
-  const byBatch = new Map<string, { batchId: string | null; jobs: JobSummary[] }>()
-  for (const job of jobs) {
-    if (!job.batch_id) {
-      groups.push({ batchId: null, jobs: [job] })
-      continue
-    }
-    const existing = byBatch.get(job.batch_id)
-    if (existing) {
-      existing.jobs.push(job)
-    } else {
-      const group = { batchId: job.batch_id, jobs: [job] }
-      byBatch.set(job.batch_id, group)
-      groups.push(group)
-    }
-  }
-  // A "batch" of one is just a job; a heading around it is noise.
-  return groups.map((group) =>
-    group.jobs.length === 1 ? { batchId: null, jobs: group.jobs } : group,
-  )
-}
-
 export function JobRail({
   selectedId,
   focusedId,
@@ -83,7 +58,6 @@ export function JobRail({
   const [sort, setSort] = useState<RailSort>('newest')
 
   const visible = useMemo(() => filterJobs(jobs, { states, text, sort }), [jobs, states, text, sort])
-  const groups = useMemo(() => groupByBatch(visible), [visible])
 
   const toggleState = (state: JobState) => {
     const next = new Set(states)
@@ -157,56 +131,16 @@ export function JobRail({
           </div>
         )}
 
-        {groups.map((group, index) =>
-          group.batchId ? (
-            <details key={group.batchId} className="rail__batch" open>
-              <summary
-                onClick={(event) => {
-                  // Clicking the heading selects the whole batch for compare,
-                  // which is how a batch is consumed (SS6.6); the disclosure
-                  // triangle still opens and closes it.
-                  if ((event.target as HTMLElement).closest('.rail__batch-select')) return
-                }}
-              >
-                <Ring size={18} {...combinedRing(group.jobs)} />
-                <span className="rail__batch-label">
-                  batch · {group.jobs.length} variants
-                </span>
-                <button
-                  type="button"
-                  className="btn btn--small rail__batch-select"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    setSelection(group.jobs.map((job) => job.id))
-                    navigate({ name: 'compare', ids: group.jobs.map((job) => job.id) })
-                  }}
-                >
-                  compare
-                </button>
-              </summary>
-              {group.jobs.map((job) => (
-                <RailRow
-                  key={job.id}
-                  job={job}
-                  selected={job.id === selectedId}
-                  checked={selection.includes(job.id)}
-                  focused={job.id === focusedId}
-                  onToggle={toggleSelected}
-                />
-              ))}
-            </details>
-          ) : (
-            <RailRow
-              key={group.jobs[0]?.id ?? index}
-              job={group.jobs[0]}
-              selected={group.jobs[0].id === selectedId}
-              checked={selection.includes(group.jobs[0].id)}
-              focused={group.jobs[0].id === focusedId}
-              onToggle={toggleSelected}
-            />
-          ),
-        )}
+        {visible.map((job) => (
+          <RailRow
+            key={job.id}
+            job={job}
+            selected={job.id === selectedId}
+            checked={selection.includes(job.id)}
+            focused={job.id === focusedId}
+            onToggle={toggleSelected}
+          />
+        ))}
       </div>
     </div>
   )

@@ -359,10 +359,12 @@ ALTER TABLE jobs ADD COLUMN batch_id TEXT;
 CREATE INDEX idx_jobs_batch ON jobs(batch_id);
 ```
 
-It earns its place by making the batch a first-class object everywhere
-downstream: the rail groups a batch under one collapsible heading with a
-combined progress ring, selecting the heading opens all its members in compare,
-and "delete this batch" is one action rather than five.
+It earns its place downstream — lineage shows a job's batch siblings, and
+`GET /api/jobs?batch_id=…` filters a submission out of the list. It is
+deliberately *not* a grouping in the rail: an early version collapsed each batch
+under a "batch · N variants" heading, and in practice that heading only got in
+the way of scanning a flat, newest-first list. The rail treats every job as its
+own row; a batch is a fact about where jobs came from, not a container.
 
 **Compare is where a batch is consumed.** When a batch's jobs reach `waiting`,
 the compare view shows them with only their differing fields — which, for a seed
@@ -372,8 +374,8 @@ promoted variant continues the family, and lineage keeps the chain readable.
 
 ## 7. Compare view
 
-Selecting two or more jobs in the rail — or a batch heading (§6.6) — opens a
-grid: 2×2 for four, sized to fill.
+Selecting two or more jobs in the rail opens a grid: 2×2 for four, sized to
+fill.
 Each cell shows the artwork, the title, the ring, and the parameter deltas
 *relative to the others* — only the fields that differ, so the caption or seed or
 conditioning scale that actually distinguishes them is immediately visible.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { combinedRing, ringGeometry, ringPoint } from './ring'
+import { ringGeometry, ringPoint } from './ring'
 
 describe('ringGeometry', () => {
   it('encodes the partially-completed case the rail exists to show', () => {
@@ -86,26 +86,5 @@ describe('ringPoint', () => {
       x: expect.closeTo(10, 6),
       y: expect.closeTo(20, 6),
     })
-  })
-})
-
-describe('combinedRing', () => {
-  const job = (state: string, current: number) =>
-    ({ state, current_epoch: current, target_epoch: 400, num_iter: 4000 }) as never
-
-  it('sums a batch into one ring', () => {
-    const combined = combinedRing([job('waiting', 400), job('waiting', 400)])
-    expect(combined.currentEpoch).toBe(800)
-    expect(combined.numIter).toBe(8000)
-  })
-
-  it('lets the most urgent state win, so one failure is not hidden', () => {
-    expect(combinedRing([job('complete', 4000), job('failed', 12)]).state).toBe('failed')
-    expect(combinedRing([job('complete', 4000), job('running', 12)]).state).toBe('running')
-    expect(combinedRing([job('complete', 4000), job('complete', 4000)]).state).toBe('complete')
-  })
-
-  it('handles an empty batch', () => {
-    expect(combinedRing([]).numIter).toBe(1)
   })
 })
