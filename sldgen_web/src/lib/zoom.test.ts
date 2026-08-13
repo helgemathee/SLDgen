@@ -6,6 +6,7 @@ import {
   actualSizeView,
   clampScale,
   fitView,
+  rescaleView,
   zoomAbout,
   zoomCentered,
 } from './zoom'
@@ -88,6 +89,62 @@ describe('fitView', () => {
     expect(fitView({ width: 0, height: 0 }, { width: 800, height: 600 })).toBeNull()
     expect(fitView({ width: 100, height: 100 }, { width: 0, height: 0 })).toBeNull()
     expect(fitView({ width: Number.NaN, height: 100 }, { width: 800, height: 600 })).toBeNull()
+  })
+})
+
+describe('rescaleView', () => {
+  const viewport = { width: 800, height: 600 }
+  // The case this exists for: a run artefact at render_size, and a weight map
+  // at the full resolution of the uploaded photo.
+  const run = { width: 1024, height: 1024 }
+  const weight = { width: 4032, height: 4032 }
+
+  it('keeps a fitted view fitted when the artefact is four times larger', () => {
+    const fitted = fitView(run, viewport)!
+    const carried = rescaleView(fitted, run, weight, viewport)
+    const expected = fitView(weight, viewport)!
+    expect(carried.scale).toBeCloseTo(expected.scale, 6)
+    expect(carried.x).toBeCloseTo(expected.x, 6)
+    expect(carried.y).toBeCloseTo(expected.y, 6)
+  })
+
+  it('keeps the zoom relative to fit, so twice-fit stays twice-fit', () => {
+    const fitted = fitView(run, viewport)!
+    const zoomed = { ...fitted, scale: fitted.scale * 2 }
+    const carried = rescaleView(zoomed, run, weight, viewport)
+    expect(carried.scale / fitView(weight, viewport)!.scale).toBeCloseTo(2, 6)
+  })
+
+  it('holds the same point of the picture under the middle of the viewport', () => {
+    // Zoomed in on a point a quarter across and a third down.
+    const scale = 1.5
+    const u = 0.25
+    const v = 1 / 3
+    const view = {
+      scale,
+      x: viewport.width / 2 - u * scale * run.width,
+      y: viewport.height / 2 - v * scale * run.height,
+    }
+    const carried = rescaleView(view, run, weight, viewport)
+    expect((viewport.width / 2 - carried.x) / (carried.scale * weight.width)).toBeCloseTo(u, 6)
+    expect((viewport.height / 2 - carried.y) / (carried.scale * weight.height)).toBeCloseTo(v, 6)
+  })
+
+  it('handles a change of aspect ratio, since the fit swaps axes', () => {
+    const wide = { width: 1600, height: 900 }
+    const tall = { width: 900, height: 1600 }
+    const carried = rescaleView(fitView(wide, viewport)!, wide, tall, viewport)
+    const expected = fitView(tall, viewport)!
+    expect(carried.scale).toBeCloseTo(expected.scale, 6)
+    expect(carried.x).toBeCloseTo(expected.x, 6)
+    expect(carried.y).toBeCloseTo(expected.y, 6)
+  })
+
+  it('leaves the view alone when nothing is measurable', () => {
+    const view = { scale: 2, x: 10, y: 20 }
+    expect(rescaleView(view, { width: 0, height: 0 }, run, viewport)).toEqual(view)
+    expect(rescaleView(view, run, { width: 0, height: 0 }, viewport)).toEqual(view)
+    expect(rescaleView({ ...view, scale: 0 }, run, weight, viewport)).toEqual({ ...view, scale: 0 })
   })
 })
 

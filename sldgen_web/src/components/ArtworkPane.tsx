@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatBytes } from '../lib/format'
-import { ZOOM_STEP, actualSizeView, fitView, zoomCentered } from '../lib/zoom'
+import { ZOOM_STEP, actualSizeView, fitView, rescaleView, zoomCentered } from '../lib/zoom'
 import { previewSrc } from './JobThumb'
 
 export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition' | 'weight'
@@ -90,6 +90,9 @@ export function ArtworkPane({
   const viewRef = useRef(view)
   viewRef.current = view
   const fittedOnce = useRef(false)
+  // The natural size of whatever the stage last showed, so a tab switch can
+  // tell "same picture, re-measured" from "a different-sized artefact".
+  const lastContent = useRef<{ width: number; height: number } | null>(null)
 
   const url = available[tab]
 
@@ -117,7 +120,44 @@ export function ArtworkPane({
     if (!measured) return false
     const fitted = fitView(measured.content, measured.viewport)
     if (!fitted) return false
+    lastContent.current = measured.content
     setView(fitted)
+    return true
+  }, [measure])
+
+  /**
+   * Take the view across a change of content (SS6.1).
+   *
+   * The first measurable content is fitted; after that the view belongs to the
+   * user, and a tab whose artefact has a different pixel size gets the same
+   * framing rather than the same raw scale -- see `rescaleView`. Returns false
+   * when nothing is measurable yet, so the caller can retry.
+   */
+  const syncContent = useCallback(() => {
+    const measured = measure()
+    if (!measured) return false
+    const { content, viewport } = measured
+    if (!(content.width > 0) || !(content.height > 0)) return false
+
+    if (!fittedOnce.current) {
+      const fitted = fitView(content, viewport)
+      if (!fitted) return false
+      lastContent.current = content
+      fittedOnce.current = true
+      setView(fitted)
+      return true
+    }
+
+    const previous = lastContent.current
+    lastContent.current = content
+    // Sub-pixel differences are measurement noise, not a new artefact.
+    if (
+      previous &&
+      (Math.abs(previous.width - content.width) > 0.5 ||
+        Math.abs(previous.height - content.height) > 0.5)
+    ) {
+      setView((current) => rescaleView(current, previous, content, viewport))
+    }
     return true
   }, [measure])
 
@@ -140,20 +180,14 @@ export function ArtworkPane({
   )
 
   // Fit is the opening view, but only once: after that the view is the user's,
-  // and the tabs exist to be compared at a shared zoom (see above). The frame
+  // and the tabs exist to be compared at a shared framing (see above). The frame
   // retry covers content that has not been laid out yet on the first pass;
   // an <img> that is still loading is caught by its onLoad instead.
   useEffect(() => {
-    if (fittedOnce.current) return
-    if (fit()) {
-      fittedOnce.current = true
-      return
-    }
-    const frame = requestAnimationFrame(() => {
-      if (fit()) fittedOnce.current = true
-    })
+    if (syncContent()) return
+    const frame = requestAnimationFrame(syncContent)
     return () => cancelAnimationFrame(frame)
-  }, [fit, tab, url, svgMarkup])
+  }, [syncContent, tab, url, svgMarkup])
 
   // The result is inlined rather than put in an <img> so it can be zoomed
   // without resampling and so its geometry can be measured (SS6.1).
@@ -238,11 +272,10 @@ export function ArtworkPane({
             <img
               src={url}
               alt={TAB_LABELS[tab]}
-              // An image has no size until it decodes, so the opening fit waits
-              // for this rather than for React.
-              onLoad={() => {
-                if (!fittedOnce.current && fit()) fittedOnce.current = true
-              }}
+              // An image has no size until it decodes, so both the opening fit
+              // and the framing carried over from the last tab wait for this
+              // rather than for React.
+              onLoad={syncContent}
             />
           ) : null}
         </div>

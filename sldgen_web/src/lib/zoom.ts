@@ -61,13 +61,10 @@ export function zoomCentered(view: View, factor: number, viewport: Size): View {
 }
 
 /**
- * The view that shows the whole of `content` centred in `viewport`.
- *
- * Returns null when either box has no area yet -- an image that has not loaded,
- * or a container measured before layout. The caller keeps its current view
- * rather than snapping to something meaningless.
+ * The scale at which `content` exactly fits `viewport`, or null when either box
+ * has no area yet.
  */
-export function fitView(content: Size, viewport: Size): View | null {
+export function fitScale(content: Size, viewport: Size): number | null {
   if (
     !(content.width > 0) ||
     !(content.height > 0) ||
@@ -76,13 +73,59 @@ export function fitView(content: Size, viewport: Size): View | null {
   ) {
     return null
   }
-  const scale = clampScale(
+  return clampScale(
     Math.min(viewport.width / content.width, viewport.height / content.height) * FIT_PADDING,
   )
+}
+
+/**
+ * The view that shows the whole of `content` centred in `viewport`.
+ *
+ * Returns null when either box has no area yet -- an image that has not loaded,
+ * or a container measured before layout. The caller keeps its current view
+ * rather than snapping to something meaningless.
+ */
+export function fitView(content: Size, viewport: Size): View | null {
+  const scale = fitScale(content, viewport)
+  if (scale === null) return null
   return {
     scale,
     x: (viewport.width - content.width * scale) / 2,
     y: (viewport.height - content.height * scale) / 2,
+  }
+}
+
+/**
+ * Carry a view across a change of content size, keeping the framing (SS6.1).
+ *
+ * The tabs share one view so that flipping between them compares like with
+ * like, but they do not share a pixel size: the run's artefacts are rendered at
+ * `render_size`, while a painted weight map is the full resolution of whatever
+ * was uploaded. Holding `scale` fixed across that would show the weight map
+ * several times larger than the mask it modulates, which is precisely the
+ * comparison the shared view exists to make.
+ *
+ * So what is held fixed is the framing rather than the raw scale: the zoom
+ * relative to "fits the viewport", and the normalised point of the content
+ * under the middle of the viewport. Fitted stays fitted; twice-fit on the
+ * subject's left eye stays twice-fit on the subject's left eye.
+ */
+export function rescaleView(view: View, previous: Size, next: Size, viewport: Size): View {
+  const before = fitScale(previous, viewport)
+  const after = fitScale(next, viewport)
+  if (before === null || after === null || !(view.scale > 0)) return view
+
+  const scale = clampScale(view.scale * (after / before))
+  const centreX = viewport.width / 2
+  const centreY = viewport.height / 2
+  // Where the middle of the viewport sits in the old content, as a fraction of
+  // it. Outside [0, 1] when panned past an edge, which carries over unchanged.
+  const u = (centreX - view.x) / (view.scale * previous.width)
+  const v = (centreY - view.y) / (view.scale * previous.height)
+  return {
+    scale,
+    x: centreX - u * scale * next.width,
+    y: centreY - v * scale * next.height,
   }
 }
 

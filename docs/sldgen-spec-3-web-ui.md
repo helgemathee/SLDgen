@@ -209,6 +209,15 @@ Tabbed, defaulting to the most advanced artefact available:
 Toggling between Input, Mask and Result at the same zoom is how you diagnose a
 bad run, so all tabs share one pan/zoom state.
 
+What they share is the **framing**, not the raw scale. The tabs do not agree on
+a pixel size — the run's artefacts are rendered at `render_size`, while a
+painted weight map is the full resolution of whatever was uploaded — so holding
+`scale` fixed would show the weight map several times larger than the mask it
+modulates, which is exactly the comparison the shared view exists to make.
+Carried across a tab switch instead: the zoom *relative to fit*, and the
+normalised point of the picture under the middle of the viewport. Fitted stays
+fitted; twice-fit on an ear stays twice-fit on that ear.
+
 ### 6.2 History — the contact sheet
 
 A horizontal filmstrip of every frame in `svg_to_png/`, plus:
