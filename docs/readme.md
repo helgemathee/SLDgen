@@ -10,6 +10,7 @@ interface to SLDgen. Written to be implemented in order.
 | [3 — Web UI](sldgen-spec-3-web-ui.md) | browser application | Spec 2 | not started |
 | [4 — Dual conditioning](sldgen-spec-4-dual-conditioning.md) | depth *and* canny in one run: `--condition-2`, `--condition-mode` | Specs 1–3 | 📝 design only, not started |
 | [5 — Canny attraction](sldgen-spec-5-canny-attraction.md) | `--attract-canny`: pull the curve onto the target's edges, with a preview in the UI | Specs 1–3 | ✅ implemented, not yet run on the GPU host |
+| [6 — Image fidelity loss](sldgen-spec-6-image-fidelity-loss.md) | `--image-loss`: a normalised gradient blend of SDS with a chamfer / pyramid / landmark term against the canvas image, end to end through service and UI | Specs 1–3, 5 | 📝 design corrected against the code (2026-09-25), not started |
 
 Each completed spec ends with an **"As built"** section: what shipped, every
 place the implementation departed from the design and why, and what was
