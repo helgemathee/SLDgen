@@ -31,6 +31,7 @@ from .checkpoint import (
     write_state,
 )
 from .guidance.sd3_sds_guidance_control import SD3GuidanceControl
+from .image_loss import ImageFidelityLoss, ImageLossLog, alpha_at, blend_gradients
 from .metrics import get_all_metrics
 from .painter.painter import SLDBSplinePainter
 from .painter.painter_optimizer import PainterOptimizer
@@ -171,7 +172,20 @@ def run(args):
         print(f"\tCanny attraction: {canny_attract.describe(stats)}", flush=True)
         print(f"\t\tWrote attract_canny.svg (canvas space at {args.render_size}px).", flush=True)
 
-    renderer = SLDBSplinePainter(args=args, device=args.device, mask=mask)
+    # Image fidelity loss (opt-in). Built here for the same reason as the Canny
+    # attraction above: canvas space exists, the painter does not yet, and
+    # nothing in it draws from the RNG, so a resumed segment rebuilds identical
+    # targets. Without --image-loss nothing is constructed, loaded or written.
+    image_loss = None
+    image_log = None
+    if args.image_loss:
+        image_loss = ImageFidelityLoss(args, args.input_image, args.mask, inputs, args.device)
+        image_log = ImageLossLog(
+            args.output_dir, resume_epoch=None if checkpoint is None else start_epoch
+        )
+        print(f"\tImage fidelity loss: {image_loss.describe()}", flush=True)
+
+    renderer =SLDBSplinePainter(args=args, device=args.device, mask=mask)
     renderer = renderer.to(args.device)
     optimizer = PainterOptimizer(args, renderer)
 
@@ -229,6 +243,35 @@ def run(args):
         raster_sld = renderer.get_image().to(args.device)
         loss = sds_loss(raster_sld)
         loss.backward(retain_graph=True)
+
+        # Image fidelity (opt-in): rewrite the control-point gradient SDS just
+        # left behind as a blend of it and the image term's gradient, anchored to
+        # the SDS norm. Weights and widths keep the pure SDS gradient, and the
+        # regularisers below accumulate on top exactly as upstream.
+        if image_loss is not None:
+            alpha = alpha_at(
+                epoch,
+                args.num_iter,
+                args.image_loss_schedule,
+                args.image_loss_weight,
+                args.image_loss_schedule_start,
+            )
+            loss_img, parts = image_loss(renderer, raster_sld)
+            grad = renderer.control_points.grad
+            g_sds = (
+                torch.zeros_like(renderer.control_points) if grad is None else grad.detach().clone()
+            )
+            (g_img,) = torch.autograd.grad(
+                loss_img, renderer.control_points, retain_graph=True, allow_unused=True
+            )
+            if g_img is None:
+                g_img = torch.zeros_like(g_sds)
+            blended, blend_stats = blend_gradients(g_sds, g_img, alpha)
+            if grad is None:
+                renderer.control_points.grad = blended
+            else:
+                grad.copy_(blended)
+            image_log.write(epoch, alpha, blend_stats, loss.item(), loss_img.item(), parts)
 
         # Regularization losses
         tqdm_update = dict()
@@ -364,9 +407,12 @@ def run(args):
             if graceful.requested:
                 break
 
+    if image_log is not None:
+        image_log.close()
+
     if ckpt_enabled:
         graceful.uninstall()
-        rate = (last_epoch - start_epoch) / max(time.time() - segment_start_time, 1e-9)
+        rate =(last_epoch - start_epoch) / max(time.time() - segment_start_time, 1e-9)
         path = save_checkpoint(
             renderer, optimizer, args, last_epoch, resolved_caption, target_hash=target_hash
         )

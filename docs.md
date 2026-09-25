@@ -99,6 +99,26 @@ python sldgen.py --target ./data/firefighter.png --fixed-endpoints
 | `--sparse-loss-progressive` | `str` | `linear` | Progressive sparse-loss mode. Any value other than `linear` disables the progressive schedule. |
 | `--length-shortening-loss-weight` | `float` | `0.1` | Weight of the length-shortening loss. |
 
+### Image Fidelity Parameters
+
+Opt-in (Spec 6, [docs/sldgen-spec-6-image-fidelity-loss.md](docs/sldgen-spec-6-image-fidelity-loss.md)). The image term's gradient on the control points is rescaled to the SDS gradient's norm and blended with it, so `--image-loss-weight 0.2` means "one fifth of the pull comes from the photograph" at every step. Every knob is inert without `--image-loss`. Writes `image_loss_target.png` (the edge map the term used) and `image_loss_log.csv` (per-epoch alpha, gradient norms, cosine, term values).
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--image-loss` | flag | `False` | Enable the image fidelity term. |
+| `--image-loss-weight` | `float` | `0.2` | Blend weight alpha in (0, 1]; with `decay`/`ramp`, the alpha the run ends on. |
+| `--image-loss-schedule` | `str` | `constant` | `constant`, `decay` (start high, lock the composition early) or `ramp` (start low, pull back late). |
+| `--image-loss-schedule-start` | `float` | `None` | Alpha at epoch 0 for `decay`/`ramp`; defaults 0.5 / 0.05. |
+| `--image-loss-chamfer` | `float` | `1.0` | Relative weight of the chamfer term: mean distance from the curve to the nearest edge pixel. `0` disables it. |
+| `--image-loss-pyramid` | `float` | `0.0` | Relative weight of the multi-scale ink-distribution term. `0` disables it. |
+| `--image-loss-landmark` | `float` | `0.0` | Relative weight of the landmark term; needs `--image-loss-landmarks`. `0` disables it. |
+| `--image-loss-target` | `str` | `None` | Canvas-space PNG at `--render-size` (an edge map, or an image to run Canny over). Omitted: derived in the run from the canvas image. Make one with `sld_edge_target.py` from a previous run's `input.png`. |
+| `--image-loss-canny-low` | `float` | `100.0` | Canny low threshold for the derived edge map. |
+| `--image-loss-canny-high` | `float` | `200.0` | Canny high threshold for the derived edge map. |
+| `--image-loss-canny-blur` | `int` | `3` | Gaussian kernel before Canny (odd, `0` disables). |
+| `--image-loss-curve-samples` | `int` | `2000` | Points taken along the curve for the chamfer and landmark terms. |
+| `--image-loss-landmarks` | `str` | `None` | Canvas-space landmark JSON from `sld_landmarks.py`. |
+
 ### Metrics Parameters
 
 | Parameter | Type | Default | Description |
