@@ -369,8 +369,16 @@ def runtime_argv(target, output_dir, stop_at, resume=None, experiment_name="run"
     return argv
 
 
+#: Inputs consumed only by initialization. A resumed segment restores its curve
+#: from the checkpoint, and sldgen.py rejects these alongside --resume rather than
+#: let the caller think they took effect -- so resume segments leave them out.
+INIT_ONLY_PARAMS = ("init_points", "stipple_weight")
+
+
 def build_argv(python, script, params, target, output_dir, stop_at, resume=None, root=None):
     """The exact command a segment runs. Recorded verbatim in ``segments.argv_json``."""
+    if resume is not None:
+        params = dict(canonical_params(params), **{name: None for name in INIT_ONLY_PARAMS})
     return [str(python), str(script)] + runtime_argv(
         target, output_dir, stop_at, resume
     ) + params_to_argv(params, root=root)

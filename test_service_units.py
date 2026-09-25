@@ -100,8 +100,10 @@ def test_params_round_trip():
         target="/w/jobs/A/inputs/target.png", output_dir="/w/jobs/A",
         stop_at=400, resume="/w/jobs/A/target/run/checkpoints/latest.pt",
     )
+    # ...less the initialization-only inputs, which a resume segment leaves out.
     ok = check("params/round-trip-ignores-runtime-flags",
-               argv_to_params(full) == interesting) and ok
+               argv_to_params(full)
+               == canonical_params(dict(interesting, stipple_weight=None, init_points=None))) and ok
     ok = check("params/runtime-flags-present",
                all(flag in full for flag in ("--target", "--output-dir", "--stop-at", "--resume"))) and ok
 
@@ -111,6 +113,20 @@ def test_params_round_trip():
                "--no-video" in params_to_argv(defaults)) and ok
     ok = check("params/save-video-drops-the-flag",
                "--no-video" not in params_to_argv(canonical_params({"save_video": True}))) and ok
+
+    # Initialization-only inputs go to the first segment only: sldgen.py rejects
+    # them next to --resume, which used to fail every stipple-weight job at its
+    # first resume.
+    seeded = canonical_params({"stipple_weight": "jobs/A/inputs/stipple_weight.png",
+                               "init_points": "jobs/A/inputs/init_points.svg"})
+    fresh = build_argv("py", "sldgen.py", seeded, target="t.png", output_dir="/w/jobs/A",
+                       stop_at=400)
+    resumed = build_argv("py", "sldgen.py", seeded, target="t.png", output_dir="/w/jobs/A",
+                         stop_at=800, resume="/w/jobs/A/target/run/checkpoints/latest.pt")
+    ok = check("params/fresh-segment-passes-init-inputs",
+               "--stipple-weight" in fresh and "--init-points" in fresh) and ok
+    ok = check("params/resume-segment-drops-init-inputs",
+               "--stipple-weight" not in resumed and "--init-points" not in resumed) and ok
     return ok
 
 
