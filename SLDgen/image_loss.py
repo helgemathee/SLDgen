@@ -29,11 +29,13 @@ in seconds.
 """
 
 import csv
+import json
 import math
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from . import canny_attract
@@ -284,6 +286,73 @@ def build_edge_map(args, input_image, mask):
     return edges, source
 
 
+def load_landmarks(path, render_size):
+    """``(xy (L, 2), weight (L,))`` from a ``sld_landmarks.py`` JSON.
+
+    Refused unless it declares canvas space at the render size. There is no
+    rescaling path on purpose: a coordinate mismatch here looks exactly like
+    "the feature does not work", so the contract is the one every spatial input
+    in this repo has. Called from ``config.parse_arguments`` too.
+    """
+    hint = "run sld_landmarks.py on a previous run's input.png at this --render-size"
+    try:
+        payload = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"--image-loss-landmarks {path} is not readable JSON ({exc}); {hint}.")
+    if payload.get("space") != "canvas":
+        raise ValueError(f"--image-loss-landmarks {path} is not in canvas space; {hint}.")
+    if list(payload.get("image_size") or []) != [render_size, render_size]:
+        raise ValueError(
+            f"--image-loss-landmarks {path} was made at {payload.get('image_size')}, but "
+            f"--render-size is {render_size}; {hint}."
+        )
+    entries = payload.get("landmarks") or []
+    try:
+        xy = [[float(e["xy"][0]), float(e["xy"][1])] for e in entries]
+        weight = [float(e.get("weight", 1.0)) for e in entries]
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise ValueError(f"--image-loss-landmarks {path} has a malformed landmark ({exc}).")
+    if not xy or min(weight) < 0 or sum(weight) <= 0:
+        raise ValueError(
+            f"--image-loss-landmarks {path} needs at least one landmark with a positive weight."
+        )
+    return torch.tensor(xy, dtype=torch.float32), torch.tensor(weight, dtype=torch.float32)
+
+
+def render_again(renderer):
+    """The current drawing, rasterised by a *fresh* DiffVG call.
+
+    Not the SDS raster, on purpose. DiffVG's backward accumulates into gradient
+    buffers that belong to the forward call's scene and are zeroed only when
+    that scene is built, so a second backward through the raster SDS already
+    backpropagated returns g_sds + g_pyramid instead of g_pyramid (measured:
+    cosine 0.99999 with g_sds, identical norms). A new forward over the same
+    shapes, at the same fixed sampling seed, is the same image with its own
+    buffers. Compositing mirrors ``SLDBSplinePainter.get_image``.
+    """
+    img = renderer.render_warp()
+    alpha = img[:, :, 3:4]
+    img = alpha * img[:, :, :3] + torch.ones(
+        img.shape[0], img.shape[1], 3, device=img.device
+    ) * (1 - alpha)
+    return img.unsqueeze(0).permute(0, 3, 1, 2)
+
+
+#: Pyramid resolutions, capped at --render-size.
+PYRAMID_LEVELS = (64, 128, 256, 512)
+
+
+def ink_of(image):
+    """``(1, 1, H, W)`` ink from an ``(N, 3, H, W)`` image in [0, 1]: 0 on white paper."""
+    return 1.0 - image[:1].mean(dim=1, keepdim=True)
+
+
+def ink_distribution(ink, level):
+    """Ink pooled to ``level`` x ``level`` and normalised to unit sum."""
+    pooled = F.adaptive_avg_pool2d(ink, level)
+    return pooled / (pooled.sum() + 1e-8)
+
+
 # --------------------------------------------------------------------------- #
 # The loss
 # --------------------------------------------------------------------------- #
@@ -304,9 +373,6 @@ class ImageFidelityLoss:
             "pyramid": float(args.image_loss_pyramid),
             "landmark": float(args.image_loss_landmark),
         }
-        for name in ("pyramid", "landmark"):
-            if weights[name] > 0:
-                raise ValueError(f"--image-loss-{name} is not implemented yet.")
         total = sum(weights.values())
         self.weights = {k: v / total for k, v in weights.items() if v > 0}
 
@@ -325,10 +391,28 @@ class ImageFidelityLoss:
             self.edge_pts = points.to(device)
             self.edge_stats = {"source": source, "raw": raw, "kept": len(points), "path": out}
 
+        self.landmark_xy = None
+        if "landmark" in self.weights:
+            xy, weight = load_landmarks(args.image_loss_landmarks, args.render_size)
+            self.landmark_xy = xy.to(device)
+            self.landmark_w = weight.to(device)
+
+        self.levels = []
+        self.pyr_target = []
+        if "pyramid" in self.weights:
+            size = int(canvas_tensor.shape[-1])
+            self.levels = [level for level in PYRAMID_LEVELS if level <= size] or [size]
+            ink = ink_of(canvas_tensor.detach().to(device))
+            self.pyr_target = [ink_distribution(ink, level) for level in self.levels]
+
     def describe(self):
         """The log line the run prints."""
         terms = ", ".join(f"{k} {v:.2f}" for k, v in self.weights.items())
         parts = [f"terms: {terms}", f"{self.n_samples} curve samples"]
+        if self.levels:
+            parts.append("pyramid levels " + "/".join(str(level) for level in self.levels))
+        if self.landmark_xy is not None:
+            parts.append(f"{len(self.landmark_xy)} landmarks")
         if self.edge_stats is not None:
             s = self.edge_stats
             parts.append(f"{s['source']}: {s['raw']} edge px -> {s['kept']} kept")
@@ -348,12 +432,47 @@ class ImageFidelityLoss:
         """
         return nearest_distances(points, self.edge_pts).mean()
 
-    def __call__(self, renderer, raster):
-        """``-> (scalar loss, {term: float or None})``."""
-        points = curve_samples(renderer, self.n_samples)
+    def landmark(self, points):
+        """Weighted mean distance from each landmark to its nearest curve point, px.
+
+        The opposite direction to chamfer: here the requirement *is* coverage --
+        every anchor must have line near it. Right for twenty anchors, wrong for
+        twenty thousand edge pixels.
+        """
+        distances = nearest_distances(self.landmark_xy, points)
+        return (self.landmark_w * distances).sum() / self.landmark_w.sum()
+
+    def pyramid(self, raster):
+        """Mean L1 between the drawing's and the photograph's ink distributions.
+
+        Each level is normalised to unit sum, so the term compares *where* the
+        ink is, not how much: a one-pixel line can never match a photograph's
+        darkness, and a raw L1 would only ask for more ink everywhere. After
+        normalisation every level's L1 lies in [0, 2], so the levels are
+        weighted equally. Backpropagates through DiffVG a second time.
+        """
+        ink = ink_of(raster)
+        total = sum(
+            (ink_distribution(ink, level) - target).abs().sum()
+            for level, target in zip(self.levels, self.pyr_target)
+        )
+        return total / len(self.levels)
+
+    def __call__(self, renderer):
+        """``-> (scalar loss, {term: float or None})``.
+
+        Takes the renderer, not the SDS raster: the pyramid term renders its own
+        (see :func:`render_again`).
+        """
         values = {}
+        if "chamfer" in self.weights or "landmark" in self.weights:
+            points = curve_samples(renderer, self.n_samples)
         if "chamfer" in self.weights:
             values["chamfer"] = self.chamfer(points)
+        if "landmark" in self.weights:
+            values["landmark"] = self.landmark(points)
+        if "pyramid" in self.weights:
+            values["pyramid"] = self.pyramid(render_again(renderer))
         loss = sum(self.weights[k] * values[k] for k in self.weights)
         parts = {k: (float(values[k]) if k in values else None) for k in TERMS}
         return loss, parts

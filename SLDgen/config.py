@@ -133,6 +133,13 @@ def validate_image_loss(parser, args):
         parser.error("--image-loss-landmark > 0 needs --image-loss-landmarks.")
     if args.image_loss_landmarks is not None and not Path(args.image_loss_landmarks).exists():
         parser.error(f"--image-loss-landmarks file does not exist: {args.image_loss_landmarks}")
+    if args.image_loss_landmark > 0:
+        from .image_loss import load_landmarks
+
+        try:
+            load_landmarks(args.image_loss_landmarks, args.render_size)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     if args.image_loss_target is not None:
         if not Path(args.image_loss_target).exists():

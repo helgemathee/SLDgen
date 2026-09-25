@@ -21,6 +21,7 @@ from PIL import Image
 
 from SLDgen import config
 from SLDgen.image_loss import (
+    render_again,
     SKIP_IMG,
     SKIP_NONE,
     SKIP_SDS,
@@ -167,6 +168,7 @@ def loss_args(**overrides):
         image_loss_pyramid=0.0,
         image_loss_landmark=0.0,
         image_loss_curve_samples=200,
+        image_loss_landmarks=None,
         output_dir=str(SCRATCH),
     )
     args.update(overrides)
@@ -226,8 +228,8 @@ def test_loss_object():
     t = torch.linspace(0, 2 * math.pi, 500)
     on_disc = torch.stack([128 + 64 * torch.cos(t), 128 + 64 * torch.sin(t)], dim=1)
     off_disc = torch.stack([128 + 90 * torch.cos(t), 128 + 90 * torch.sin(t)], dim=1)
-    value_on, parts = loss(SimpleNamespace(sampled_curve2d=on_disc), None)
-    value_off, _ = loss(SimpleNamespace(sampled_curve2d=off_disc), None)
+    value_on, parts = loss(SimpleNamespace(sampled_curve2d=on_disc))
+    value_off, _ = loss(SimpleNamespace(sampled_curve2d=off_disc))
     ok &= check(
         "loss lower on the edge than off it",
         float(value_on) < 2.0 and float(value_off) > 20.0,
@@ -238,6 +240,150 @@ def test_loss_object():
         parts["chamfer"] == float(value_on) and parts["pyramid"] is None and parts["landmark"] is None,
     )
     ok &= check("curve_samples strides", len(curve_samples(SimpleNamespace(sampled_curve2d=on_disc), 100)) == 100)
+    return ok
+
+
+def blob_image(size=128, dx=0, dy=0):
+    """(1, 3, H, W): white paper with a dark square, optionally translated."""
+    image = torch.ones(1, 3, size, size)
+    c = size // 2
+    image[:, :, c - 12 + dy : c + 12 + dy, c - 12 + dx : c + 12 + dx] = 0.1
+    return image
+
+
+def test_pyramid():
+    ok = True
+    target = blob_image()
+    loss = ImageFidelityLoss(
+        loss_args(image_loss_chamfer=0.0, image_loss_pyramid=1.0), None, None, target, "cpu"
+    )
+    ok &= check("pyramid levels capped at render size", loss.levels == [64, 128])
+    ok &= check("pyramid writes no edge target", loss.edge_pts is None)
+    ok &= check("pyramid identical inputs -> 0", float(loss.pyramid(target)) < 1e-6)
+
+    shifts = [float(loss.pyramid(blob_image(dx=d))) for d in (40, 20, 6)]
+    ok &= check(
+        "pyramid positive, shrinks with the translation",
+        shifts[0] > shifts[1] > shifts[2] > 0,
+        str(shifts),
+    )
+    fainter = torch.ones(1, 3, 128, 128)
+    fainter[:, :, 52:76, 52:76] = 0.7  # same place, far less ink
+    ok &= check(
+        "pyramid compares where, not how much",
+        float(loss.pyramid(fainter)) < 1e-5,
+        str(float(loss.pyramid(fainter))),
+    )
+
+    moved = blob_image(dx=20).requires_grad_(True)
+    loss.pyramid(moved).backward()
+    ok &= check("pyramid gradient finite and nonzero", bool(torch.isfinite(moved.grad).all()) and float(moved.grad.abs().sum()) > 0)
+    return ok
+
+
+def write_landmarks(path, points, size=256, space="canvas"):
+    import json
+
+    path.write_text(json.dumps({
+        "space": space,
+        "image_size": [size, size],
+        "landmarks": [{"name": f"p{i}", "xy": list(xy), "weight": w} for i, (xy, w) in enumerate(points)],
+    }))
+    return str(path)
+
+
+def test_landmark():
+    ok = True
+    path = write_landmarks(SCRATCH / "lm.json", [((100.0, 100.0), 3.0), ((200.0, 50.0), 1.0)])
+    loss = ImageFidelityLoss(
+        loss_args(image_loss_chamfer=0.0, image_loss_landmark=1.0, image_loss_landmarks=path),
+        None, None, None, "cpu",
+    )
+    base = torch.tensor([[0.0, 0.0], [250.0, 250.0]])
+    value = lambda pts: float(loss(SimpleNamespace(sampled_curve2d=pts))[0])
+    before = value(base)
+    near = value(torch.cat([base, torch.tensor([[101.0, 100.0]])]))
+    far = value(torch.cat([base, torch.tensor([[5.0, 250.0]])]))
+    ok &= check("landmark: a point near an anchor lowers the loss", near < before - 50, f"{before} -> {near}")
+    ok &= check("landmark: a far point leaves it unchanged", abs(far - before) < 1e-4, f"{before} -> {far}")
+
+    # Weights: covering the weight-3 anchor helps three times as much per pixel
+    # as the weight-1 one. The anchors sit in opposite corners, so covering one
+    # never changes the other's nearest point.
+    path = write_landmarks(SCRATCH / "lm_w.json", [((20.0, 20.0), 3.0), ((230.0, 230.0), 1.0)])
+    weighted = ImageFidelityLoss(
+        loss_args(image_loss_chamfer=0.0, image_loss_landmark=1.0, image_loss_landmarks=path),
+        None, None, None, "cpu",
+    )
+    wvalue = lambda pts: float(weighted(SimpleNamespace(sampled_curve2d=pts))[0])
+    base = torch.tensor([[128.0, 0.0], [128.0, 255.0]])
+    d_a = float(nearest_distances(torch.tensor([[20.0, 20.0]]), base)[0])
+    d_b = float(nearest_distances(torch.tensor([[230.0, 230.0]]), base)[0])
+    start = wvalue(base)
+    cover_a = wvalue(torch.cat([base, torch.tensor([[20.0, 20.0]])]))
+    cover_b = wvalue(torch.cat([base, torch.tensor([[230.0, 230.0]])]))
+    ok &= check(
+        "landmark: weights scale the pull",
+        close(start - cover_a, 3 * d_a / 4, 1e-3) and close(start - cover_b, d_b / 4, 1e-3),
+        f"{start - cover_a} vs {3 * d_a / 4}; {start - cover_b} vs {d_b / 4}",
+    )
+
+    for label, broken in (
+        ("wrong size", write_landmarks(SCRATCH / "lm_size.json", [((1.0, 1.0), 1.0)], size=512)),
+        ("wrong space", write_landmarks(SCRATCH / "lm_space.json", [((1.0, 1.0), 1.0)], space="source")),
+    ):
+        try:
+            ImageFidelityLoss(
+                loss_args(image_loss_chamfer=0.0, image_loss_landmark=1.0, image_loss_landmarks=broken),
+                None, None, None, "cpu",
+            )
+            ok &= check(f"landmark file {label} refused", False)
+        except ValueError as exc:
+            ok &= check(f"landmark file {label} refused, names the script", "sld_landmarks.py" in str(exc))
+
+    passed, text = parse(["--image-loss", "--image-loss-landmark", "1", "--image-loss-landmarks",
+                          str(SCRATCH / "lm_size.json")])
+    ok &= check("landmark file checked at parse time", not passed and "sld_landmarks.py" in text)
+    return ok
+
+
+def test_pyramid_is_independent_of_the_sds_backward():
+    """Regression: DiffVG accumulates across backward passes through one raster.
+
+    The pyramid gradient must be the same whether or not another loss has
+    already backpropagated through the SDS raster, which is always the case in
+    the run. Before render_again it came back as g_sds + g_pyramid.
+    """
+    with contextlib.redirect_stdout(io.StringIO()):
+        args = config.parse_arguments(
+            ["--target", "./data/firefighter.png", "--use-cpu", "--seed", "0", "--render-size", "128",
+             "--experiment-name", "imglossgeom", "--init-method", "trefoil", "--n-control-points", "30",
+             "--sampling-rate", "500", "--image-loss", "--image-loss-chamfer", "0",
+             "--image-loss-pyramid", "1", "--image-loss-curve-samples", "100"]
+        )
+    args.output_dir = str(SCRATCH)
+    renderer = SLDBSplinePainter(args=args, device=args.device, mask=None)
+    renderer.init_image()
+    renderer.parameters()
+    loss_fn = ImageFidelityLoss(args, None, None, blob_image(), "cpu")
+
+    raster = renderer.get_image()
+    fresh_raster_equal = torch.equal(raster, render_again(renderer))
+    loss, _ = loss_fn(renderer)
+    (alone,) = torch.autograd.grad(loss, renderer.control_points, retain_graph=True)
+
+    raster = renderer.get_image()
+    (raster.mean() * 1000).backward(retain_graph=True)  # stands in for SDS
+    g_sds = renderer.control_points.grad.clone()
+    loss, _ = loss_fn(renderer)
+    (after,) = torch.autograd.grad(loss, renderer.control_points, retain_graph=True)
+
+    ok = check("render_again reproduces the raster", fresh_raster_equal)
+    ok &= check(
+        "pyramid gradient independent of a prior backward",
+        torch.allclose(alone, after, rtol=1e-4, atol=1e-8) and float(alone.norm()) > 0,
+        f"|alone| {float(alone.norm()):.3g} |after| {float(after.norm()):.3g} |g_sds| {float(g_sds.norm()):.3g}",
+    )
     return ok
 
 
@@ -328,7 +474,7 @@ def test_real_painter():
     renderer.get_image()
     args.output_dir = str(SCRATCH)
     loss_fn = ImageFidelityLoss(args, image, mask, None, "cpu")
-    loss, _ = loss_fn(renderer, None)
+    loss, _ = loss_fn(renderer)
     (grad,) = torch.autograd.grad(loss, renderer.control_points)
     ok = check(
         "real painter: grad reaches control points, finite, nonzero",
@@ -347,6 +493,9 @@ def main():
         test_chamfer,
         test_edge_target,
         test_loss_object,
+        test_pyramid,
+        test_landmark,
+        test_pyramid_is_independent_of_the_sds_backward,
         test_log_resume,
         test_validation,
         test_real_painter,

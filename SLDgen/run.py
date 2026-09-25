@@ -256,7 +256,7 @@ def run(args):
                 args.image_loss_weight,
                 args.image_loss_schedule_start,
             )
-            loss_img, parts = image_loss(renderer, raster_sld)
+            loss_img, parts = image_loss(renderer)
             grad = renderer.control_points.grad
             g_sds = (
                 torch.zeros_like(renderer.control_points) if grad is None else grad.detach().clone()

@@ -130,6 +130,20 @@ def test_image_loss_run():
     return passed
 
 
+def test_pyramid_run():
+    """The pyramid term backpropagates through DiffVG a second time."""
+    args = fresh("imgloss_pyramid", FLAGS + ["--image-loss-pyramid", "0.5"])
+    quiet_run(args)
+    rows = read_log(args)
+    passed = (
+        len(rows) == HORIZON + 1
+        and all(r["pyramid"] and r["chamfer"] and r["skipped"] == "0" for r in rows)
+        and (Path(args.output_dir) / "final_sld.svg").exists()
+    )
+    print(f"[pyramid run] both terms logged every epoch : {'PASS' if passed else 'FAIL'}")
+    return passed
+
+
 def test_image_loss_changes_trajectory():
     """Sanity: the term does something, i.e. the blend reaches the optimiser."""
     plain = (Path(make_args("imgloss_plain").output_dir) / "final_sld.svg").read_bytes()
@@ -236,6 +250,7 @@ def main():
         test_default_path_never_constructs,
         test_image_loss_run,
         test_image_loss_changes_trajectory,
+        test_pyramid_run,
         test_segmented_equals_uninterrupted,
         test_resume_refuses_changed_weight,
         test_wrong_size_target_refused_early,
