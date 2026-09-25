@@ -1,5 +1,5 @@
 import type { Params, ParamValue } from '../api/types'
-import { PARAM_SPECS, SPEC_BY_NAME } from './params'
+import { INPUT_PARAMS, PARAM_SPECS, SPEC_BY_NAME } from './params'
 
 /** Deep-ish equality, enough for the value kinds a parameter can hold. */
 export function sameValue(a: ParamValue, b: ParamValue): boolean {
@@ -45,10 +45,7 @@ export function distinguishingParams(sets: Params[]): string[] {
  */
 const IDENTITY_EXCLUDED = new Set([
   ...PARAM_SPECS.filter((spec) => spec.group === 'operational').map((spec) => spec.name),
-  'avoid',
-  'attract',
-  'init_points',
-  'stipple_weight',
+  ...INPUT_PARAMS,
 ])
 
 export function sameRun(a: Params, b: Params): boolean {

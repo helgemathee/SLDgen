@@ -3,7 +3,7 @@ import { api } from '../api/client'
 import type { JobDetail, JobSummary, ParamValue, Params } from '../api/types'
 import { formatDuration, jobLabel, meanItersPerSec } from '../lib/format'
 import { diffParams, paramLabel } from '../lib/paramdiff'
-import { PARAM_SPECS, type ParamSection } from '../lib/params'
+import { IMAGE_LOSS_PARAMS, PARAM_SPECS, type ParamSection } from '../lib/params'
 import {
   estimateBatchSeconds,
   findDuplicates,
@@ -13,9 +13,23 @@ import {
   type Variant,
 } from '../lib/variants'
 import { useApp } from '../state/store'
+import { CannyPanel } from './CannyPanel'
+import { ImageLossPanel } from './ImageLossPanel'
 import { ParamFields } from './ParamFields'
 
 const SECTIONS: ParamSection[] = ['prompt', 'curve', 'guidance', 'constraints', 'losses', 'run']
+
+/** Shown in their own panels, with the preview their knobs need. */
+const PANEL_PARAMS = [
+  ...IMAGE_LOSS_PARAMS,
+  'attract_canny',
+  'attract_canny_low',
+  'attract_canny_high',
+  'attract_canny_blur',
+  'attract_canny_simplify',
+  'attract_canny_min_length',
+  'attract_canny_max_points',
+]
 
 /** Columns beyond seed and caption can be promoted into the table (SS6.6). */
 const COLUMN_CANDIDATES = PARAM_SPECS.filter(
@@ -74,6 +88,9 @@ export function RunAgainDialog({
       .then((list) => setExisting(list.jobs))
       .catch(() => undefined)
   }, [])
+
+  const setBaseParam = (name: string, value: ParamValue) =>
+    setBase((current) => ({ ...current, [name]: value }))
 
   const changedNames = useMemo(() => diffParams(parentParams, base), [parentParams, base])
   const rate = useMemo(() => meanItersPerSec(job.segments), [job.segments])
@@ -365,9 +382,28 @@ export function RunAgainDialog({
               params={base}
               changedAgainst={parentParams}
               sections={SECTIONS}
-              hide={columns.filter((name) => name !== 'caption')}
-              onChange={(name, value) => setBase((current) => ({ ...current, [name]: value }))}
+              hide={[...columns.filter((name) => name !== 'caption'), ...PANEL_PARAMS]}
+              onChange={setBaseParam}
             />
+            {/* The same panels as the new-job form (Spec 3 SS6.5 promised
+                parity). Input files are inherited and shown read-only. */}
+            <details className="group" open={Boolean(base.attract_canny || base.image_loss)}>
+              <summary>
+                <span className="eyebrow">Canny attraction · image fidelity</span>
+                {PANEL_PARAMS.some((name) => changedNames.includes(name)) && (
+                  <span className="mono">changed</span>
+                )}
+              </summary>
+              <div className="group__body">
+                <CannyPanel params={base} targetSha256={job.target_sha256} onChange={setBaseParam} />
+                <ImageLossPanel
+                  params={base}
+                  targetSha256={job.target_sha256}
+                  inherited={job.inputs}
+                  onChange={setBaseParam}
+                />
+              </div>
+            </details>
           </section>
         </div>
 

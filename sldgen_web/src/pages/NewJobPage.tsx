@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { JobSummary, ParamValue, Partition, UploadResult } from '../api/types'
 import { CannyPanel } from '../components/CannyPanel'
+import { ImageLossPanel } from '../components/ImageLossPanel'
 import { ConstraintPicker } from '../components/ConstraintPicker'
 import { ParamFields } from '../components/ParamFields'
 import { PrepCanvas, type PrepCanvasHandle } from '../components/PrepCanvas'
@@ -16,12 +17,17 @@ import {
   type MaskMode,
 } from '../lib/formstate'
 import { formatDuration, meanItersPerSec } from '../lib/format'
-import { SPEC_BY_NAME, validateParams, type ParamSection } from '../lib/params'
+import {
+  IMAGE_LOSS_PARAMS,
+  SPEC_BY_NAME,
+  validateParams,
+  type ParamSection,
+} from '../lib/params'
 import { overlayUrl } from '../lib/sources'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 
-const SECTIONS: ParamSection[] = ['prompt', 'curve', 'guidance', 'losses']
+const SECTIONS: ParamSection[] = ['prompt', 'curve', 'guidance']
 const INPUT_ROLES = ['avoid', 'attract', 'init_points', 'stipple_weight'] as const
 
 /** Owned by CannyPanel, which shows them next to the trace they produce. */
@@ -55,6 +61,7 @@ export function NewJobPage() {
   const [busy, setBusy] = useState(false)
   const [presetName, setPresetName] = useState('')
   const [presets, setPresets] = useState<{ id: string; name: string; params: unknown }[]>([])
+  const [imageLossBlock, setImageLossBlock] = useState<string | null>(null)
   const prep = useRef<PrepCanvasHandle | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -110,7 +117,7 @@ export function NewJobPage() {
   }
 
   const params = toParams(form)
-  const problems = validateParams(params)
+  const problems = [...validateParams(params), ...(imageLossBlock ? [imageLossBlock] : [])]
   const rate = meanItersPerSec(
     jobs.flatMap(() => []) as { start_epoch: number; end_epoch: number | null; started_at: string; finished_at: string | null }[],
   )
@@ -351,6 +358,33 @@ export function NewJobPage() {
         </div>
 
         <ParamFields params={form.params} sections={SECTIONS} onChange={setParam} />
+
+        {/* Its own group, like the Canny panel: the knobs need the edge map
+            they produce next to them, and the file roles need a picker. */}
+        <details className="group" open={Boolean(form.params.image_loss)}>
+          <summary>
+            <span className="eyebrow">Image fidelity</span>
+            {Boolean(form.params.image_loss) && <span className="mono">on</span>}
+          </summary>
+          <div className="group__body">
+            <ImageLossPanel
+              params={{ ...form.params, num_iter: form.numIter }}
+              optional={form.optional}
+              targetSha256={upload?.sha256 ?? null}
+              jobs={jobs}
+              onChange={setParam}
+              onOptional={setOptional}
+              onBlock={setImageLossBlock}
+            />
+          </div>
+        </details>
+
+        <ParamFields
+          params={form.params}
+          sections={['losses']}
+          hide={IMAGE_LOSS_PARAMS}
+          onChange={setParam}
+        />
 
         <details className="group" open>
           <summary>

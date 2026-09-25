@@ -223,6 +223,15 @@ export function ActionsPanel({
                 final PNG
               </a>
             )}
+            {job.artifacts.some((artifact) => artifact.name === 'image_loss_log.csv') && (
+              <a
+                className="btn btn--small"
+                href={fileUrl(job.id, 'target/run/image_loss_log.csv')}
+                download
+              >
+                fidelity CSV
+              </a>
+            )}
             {job.artifacts.some((artifact) => artifact.name === 'sketch.mp4') && (
               <a className="btn btn--small" href={fileUrl(job.id, 'target/run/sketch.mp4')} download>
                 mp4

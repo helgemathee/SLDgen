@@ -1,5 +1,5 @@
 import type { JobDetail, ParamValue, Params } from '../api/types'
-import { PARAM_SPECS, defaultParams } from './params'
+import { INPUT_PARAMS, PARAM_SPECS, defaultParams } from './params'
 
 /**
  * Parameter persistence (Spec 3 SS9).
@@ -31,7 +31,7 @@ export interface InputRef {
 export interface OptionalField {
   enabled: boolean
   value: ParamValue
-  /** Set instead of `value` for the four input-backed roles. */
+  /** Set instead of `value` for the input-backed roles. */
   inputs?: InputRef[]
 }
 
@@ -48,8 +48,11 @@ export interface FormState {
 
 export const OPTIONAL_NAMES = PARAM_SPECS.filter((spec) => spec.optional).map((spec) => spec.name)
 
-const INPUT_ROLES = ['avoid', 'attract', 'init_points', 'stipple_weight'] as const
+const INPUT_ROLES = INPUT_PARAMS
 export type InputRole = (typeof INPUT_ROLES)[number]
+
+/** Only sent while --image-loss is on: without the gate the files are inert. */
+const IMAGE_LOSS_ROLES: readonly string[] = ['image_loss_target', 'image_loss_landmarks']
 
 export function emptyFormState(): FormState {
   const params = defaultParams()
@@ -182,6 +185,7 @@ export function toInputs(state: FormState): Record<string, unknown>[] {
   for (const role of INPUT_ROLES) {
     const field = state.optional[role]
     if (!field?.enabled) continue
+    if (IMAGE_LOSS_ROLES.includes(role) && !state.params.image_loss) continue
     for (const reference of field.inputs ?? []) {
       inputs.push({
         role,

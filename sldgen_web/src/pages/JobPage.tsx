@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import { ActionsPanel } from '../components/ActionsPanel'
 import { ArtworkPane, availableArtwork, defaultTab, type ArtworkTab } from '../components/ArtworkPane'
 import { Filmstrip } from '../components/Filmstrip'
+import { ImageLossDiagnostics } from '../components/ImageLossDiagnostics'
 import { LineagePanel, ParamTable, SegmentList } from '../components/JobData'
 import { LogViewer } from '../components/LogViewer'
 import { PartitionPanel } from '../components/PartitionPanel'
@@ -305,6 +306,7 @@ export function JobPage({ jobId }: { jobId: string }) {
           </button>
         )}
         <ParamTable job={job} onRunAgain={() => setRunAgainOpen(true)} />
+        <ImageLossDiagnostics job={job} />
         {job.state === 'complete' && <PartitionPanel job={job} />}
       </div>
 

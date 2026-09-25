@@ -230,3 +230,20 @@ describe('toInputs', () => {
     expect(inputs[1].source_partition_id).toBe('P')
   })
 })
+
+describe('image-loss inputs', () => {
+  it('are only sent while the gate is on', () => {
+    const state = emptyFormState()
+    state.optional.image_loss_target = {
+      enabled: true,
+      value: null,
+      inputs: [{ source_kind: 'upload', sha256: 'abc' }],
+    }
+    expect(toInputs(state)).toEqual([])
+    state.params.image_loss = true
+    expect(toInputs(state)).toEqual([
+      expect.objectContaining({ role: 'image_loss_target', source_kind: 'upload', sha256: 'abc' }),
+    ])
+    expect(toParams(state).image_loss_target).toBeUndefined()
+  })
+})
