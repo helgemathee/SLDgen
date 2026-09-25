@@ -1275,5 +1275,50 @@ a {
   max-width: 70vw;
 }
 
+/* Constraint sources (ConstraintPicker, FramePicker).
+ *
+ * Two lists that can both grow without bound -- every job that ever drew a
+ * frame, and every frame of the one you picked -- inside a panel that is itself
+ * inside a scrolling form. Both are capped and scroll on their own, so reaching
+ * the parameters below never means scrolling past four hundred thumbnails.
+ *
+ * The frames wrap into a grid rather than running off to the right as the
+ * contact sheet does: here you are looking for one iteration among many, and a
+ * horizontal strip shows six of them at a time. */
+.picker__head {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: 6px;
+}
+
+.picker .recent {
+  max-height: 190px;
+  overflow-y: auto;
+  margin-top: 0;
+}
+
+.picker__frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--slate);
+  scrollbar-width: thin;
+}
+
+/* The picker's frames are choices, not a scrub position: hover says which one
+ * the click will take, since none of them is ever "current". */
+.picker__frames .filmstrip__frame:hover {
+  border-color: var(--paper);
+}
+
+.picker__frames .filmstrip__frame[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 /* Motion: none (SS3). The progress ring advances because real progress
  * advanced it; there is no idle animation anywhere in the interface. */

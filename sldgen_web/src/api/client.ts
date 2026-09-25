@@ -142,6 +142,15 @@ export const api = {
   cleanup: (body: Record<string, unknown>) =>
     request<CleanupResult>('/api/maintenance/cleanup', json(body)),
 
+  /** Delete a ticked selection. `dryRun` reports what it *would* free, using
+   *  the same server-side selection code that then performs it, so the
+   *  confirmation dialog can state a figure that cannot drift from the act. */
+  deleteJobs: (ids: string[], dryRun: boolean) =>
+    request<CleanupResult>(
+      '/api/maintenance/cleanup',
+      json({ action: 'delete_jobs', job_ids: ids, dry_run: dryRun }),
+    ),
+
   cannyPreview: (body: Record<string, unknown>) =>
     request<CannyPreview>('/api/canny/preview', json(body)),
 

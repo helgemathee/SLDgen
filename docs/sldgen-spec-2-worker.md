@@ -220,9 +220,27 @@ deleting A can never break or silently alter B, and B stays reproducible. The
 cost is a few hundred KB per edge — irrelevant.
 
 **Coordinate-space guard.** Reject any `avoid`/`attract`/`init_points` input
-taken from a source run whose `config.json` shows `scale_w`/`scale_h` present
-*unless* it is `final_sld.svg` (see Spec 1 §7). Intermediate `svg_logs/` files
-from a rescaled run are in a different space and would silently misregister.
+that cannot register with the target, because geometry in the wrong space
+pushes the curve away from the wrong place and does it silently.
+
+Originally the test was the presence of `scale_w`/`scale_h` in the source run's
+`config.json`. **That premise was wrong** and the rule has been replaced. `run.py`
+applies `increase_object_size` to `renderer.shapes` and then calls `save_svg`,
+which calls `set_shapes()` and rebuilds `shapes` from the control points —
+discarding the rescale, as run.py's own comment says ("this rescale does not
+currently reach `final_sld.svg` … preserved deliberately"). Measured on a real
+run with `object_size_ratio 0.75` (`scale_w 0.864`), `final_sld.svg` and
+`svg_logs/svg_iter4000.svg` declare the same 512×512 canvas and bound the same
+box to a tenth of a pixel. Since `object_size_ratio` defaults to 0.75, the old
+rule refused the intermediates of essentially *every* run — geometry that
+registers perfectly well, and exactly the geometry you want when the good curve
+was at iteration 1700 rather than at the end.
+
+The question is now asked of the files: an input is refused when the canvas it
+declares differs from the one `final_sld.svg` declares, which is a refusal that
+is true whenever it fires (`jobs.coordinate_space_mismatch`). A source job with
+no final SVG yet — one still running — has nothing to disagree with, and its
+frames are offered.
 
 ### 4.4 `segments`
 

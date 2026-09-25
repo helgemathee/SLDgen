@@ -1,5 +1,6 @@
 import { JobThumb } from '../components/JobThumb'
 import { Ring } from '../components/Ring'
+import { SelectionActions } from '../components/SelectionActions'
 import { formatAgo, jobLabel } from '../lib/format'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
@@ -31,8 +32,11 @@ export function JobsPage() {
       <div className="compare__toolbar">
         <span className="eyebrow">{jobs.length} jobs</span>
         <span className="note">
-          Tick two or more to compare them. Shift-click a rail row does the same.
+          Tick two or more to compare them, or any number to delete them. Shift-click a rail row
+          does the same.
         </span>
+        <span style={{ flex: 1 }} />
+        <SelectionActions compact />
       </div>
       {jobs.map((job) => (
         <div className="cell" key={job.id}>

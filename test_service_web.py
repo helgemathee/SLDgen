@@ -13,8 +13,11 @@ only what the web UI needed and what the UI depends on being true:
   * the marks a job carries between browsers: the frame it is parked on, the
     starred frames, and the archive of just those (SS6.2)
   * ``/api/events``, the rail's global stream
+  * the constraint sources the picker offers: a frame of another job, and an
+    uploaded SVG, both copied into the new job rather than referenced (SS8.3)
   * ``/api/maintenance/cleanup``, whose dry run must report exactly what the
-    real run then does (SS11)
+    real run then does (SS11), including ``delete_jobs`` -- the rail's ticked
+    selection
   * that ``sldgen_web/src/lib/params.ts`` still agrees with
     ``sldgen_service/params.py`` -- the one duplication in the whole design
 
@@ -216,15 +219,28 @@ def test_frames(harness, sha256):
     check("frames/not-rescaled-by-default", frames["rescaled"] is False)
     check("frames/no-final-svg-before-the-horizon", frames["final_svg_url"] is None)
 
-    # A run that rescaled its object puts svg_logs/ in a different coordinate
-    # space than final_sld.svg, and the UI must say so rather than offering the
-    # intermediates as constraint sources.
-    config_path = harness.root / "jobs" / job_id / "target" / "run" / "config.json"
+    # `rescaled` means "svg_logs/ is in a different coordinate space than
+    # final_sld.svg", and it is answered by comparing the canvases the two files
+    # declare -- not by looking for scale_w in config.json, which is set on
+    # nearly every real run and does not reach either file (see
+    # jobs.coordinate_space_mismatch). A job with only the flag set is not
+    # rescaled; a job whose files actually disagree is.
+    run_dir = harness.root / "jobs" / job_id / "target" / "run"
+    config_path = run_dir / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    config["scale_w"] = 1.4
+    config["scale_w"], config["scale_h"] = 0.864, 0.867
     config_path.write_text(json.dumps(config))
+    check("frames/object-size-ratio-alone-is-not-a-rescale",
+          harness.client.get(f"/api/jobs/{job_id}/frames").json()["rescaled"] is False)
+
+    svg_header = '<?xml version="1.0" ?>\n<svg xmlns="http://www.w3.org/2000/svg" '
+    (run_dir / "final_sld.svg").write_text(svg_header + 'width="512" height="512"><g/></svg>')
+    newest = max(epochs)
+    (run_dir / "svg_logs" / f"svg_iter{newest}.svg").write_text(
+        svg_header + 'width="1024" height="1024"><g/></svg>'
+    )
     rescaled = harness.client.get(f"/api/jobs/{job_id}/frames").json()
-    check("frames/flags-a-rescaled-run", rescaled["rescaled"] is True)
+    check("frames/flags-a-genuine-canvas-mismatch", rescaled["rescaled"] is True)
 
     # And the API refuses such an input outright, so the UI's greying-out is a
     # convenience rather than the only guard.
@@ -239,14 +255,14 @@ def test_frames(harness, sha256):
                     "role": "avoid",
                     "source_kind": "job",
                     "source_job_id": job_id,
-                    "path": f"svg_logs/svg_iter{epochs[0]}.svg",
+                    "path": f"svg_logs/svg_iter{newest}.svg",
                 }
             ],
         },
     )
-    check("frames/api-refuses-a-rescaled-intermediate-as-input",
+    check("frames/api-refuses-an-intermediate-on-a-different-canvas",
           refused.status_code == 400 and "coordinate space" in refused.text,
-          refused.text[:120])
+          refused.text[:160])
 
     check("frames/empty-for-a-job-that-has-not-run",
           harness.client.get(
@@ -547,6 +563,192 @@ def test_cleanup(harness, sha256):
               any((harness.root / "jobs" / complete["id"] / "logs").glob("segment_*.log")))
 
 
+# -- constraint sources: which SVGs may feed --avoid -------------------------
+
+
+def test_constraint_sources(harness, sha256):
+    """The three things the picker can hand to ``--avoid`` (and its siblings).
+
+    The UI offers a job's final SVG, *any* of its frames, and an uploaded SVG.
+    Only the first of those was exercised before, and the other two are the
+    interesting ones: a frame is what you want when the good curve was at 1700
+    rather than at 4000, and an upload is geometry from outside the service
+    entirely. All three must end up **copied** into the new job (Spec 2 SS4.3),
+    because a constraint that reads from another job's directory breaks when
+    that job is deleted.
+    """
+    print("\n--- constraint sources: a frame, and an uploaded SVG")
+    source = harness.create_job(sha256, target_epoch=200, num_iter=1000, title="obstacle")
+    source_id = source["id"]
+    harness.await_state(source_id, "waiting")
+
+    frames = harness.client.get(f"/api/jobs/{source_id}/frames").json()
+    epochs = [frame["epoch"] for frame in frames["frames"] if frame["svg"]]
+    check("sources/the-source-has-frames-with-svgs", len(epochs) >= 2, str(epochs))
+    check("sources/an-unrescaled-run-offers-its-frames", frames["rescaled"] is False)
+
+    # "That other job, at iteration N" -- the path the UI builds from the epoch.
+    chosen = epochs[-1]
+    created = harness.client.post(
+        "/api/jobs",
+        json={
+            "title": "avoids a frame",
+            "target_sha256": sha256,
+            "target_epoch": 100,
+            "params": {"num_iter": 1000},
+            "inputs": [
+                {
+                    "role": "avoid",
+                    "source_kind": "job",
+                    "source_job_id": source_id,
+                    "path": f"svg_logs/svg_iter{chosen}.svg",
+                }
+            ],
+        },
+    )
+    check("sources/a-frame-is-accepted-as-an-avoid-input",
+          created.status_code == 201, created.text[:200])
+    if created.status_code == 201:
+        detail = created.json()
+        recorded = [entry for entry in detail["inputs"] if entry["role"] == "avoid"]
+        check("sources/the-frame-input-is-recorded", len(recorded) == 1, str(recorded))
+        check("sources/it-remembers-which-job-it-came-from",
+              recorded and recorded[0]["source_job_id"] == source_id)
+        copied = harness.root / recorded[0]["stored_path"]
+        original = (harness.root / "jobs" / source_id / "target" / "run"
+                    / "svg_logs" / f"svg_iter{chosen}.svg")
+        check("sources/the-bytes-are-copied-not-referenced",
+              copied.exists() and copied.read_bytes() == original.read_bytes(),
+              str(copied))
+        check("sources/the-copy-keeps-the-svg-suffix", copied.suffix == ".svg")
+        check("sources/the-param-points-at-the-copy",
+              detail["params"]["avoid"] == [recorded[0]["stored_path"]],
+              str(detail["params"]["avoid"]))
+
+    # An SVG uploaded from outside: content-addressed like any other upload, and
+    # resolved by digest rather than by a path in someone's run directory.
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'
+    svg += b'<path d="M 10 10 L 400 400" stroke="black" fill="none"/></svg>'
+    uploaded = harness.client.post(
+        "/api/uploads", files={"file": ("ring.svg", svg, "image/svg+xml")}
+    )
+    check("sources/an-svg-can-be-uploaded", uploaded.status_code == 200, uploaded.text[:120])
+    digest = uploaded.json()["sha256"]
+    check("sources/the-uploaded-svg-is-served-back",
+          harness.client.get(f"/api/uploads/{digest}").content == svg)
+
+    from_upload = harness.client.post(
+        "/api/jobs",
+        json={
+            "title": "avoids an upload",
+            "target_sha256": sha256,
+            "target_epoch": 100,
+            "params": {"num_iter": 1000},
+            "inputs": [{"role": "avoid", "source_kind": "upload", "sha256": digest}],
+        },
+    )
+    check("sources/an-uploaded-svg-is-accepted-as-an-avoid-input",
+          from_upload.status_code == 201, from_upload.text[:200])
+    if from_upload.status_code == 201:
+        recorded = [entry for entry in from_upload.json()["inputs"] if entry["role"] == "avoid"]
+        stored = harness.root / recorded[0]["stored_path"]
+        check("sources/the-uploaded-svg-is-copied-in",
+              stored.exists() and stored.read_bytes() == svg, str(stored))
+        check("sources/the-uploaded-copy-keeps-the-svg-suffix", stored.suffix == ".svg")
+
+    check("sources/a-frame-that-does-not-exist-is-refused",
+          harness.client.post(
+              "/api/jobs",
+              json={
+                  "target_sha256": sha256,
+                  "target_epoch": 100,
+                  "params": {"num_iter": 1000},
+                  "inputs": [{"role": "avoid", "source_kind": "job",
+                              "source_job_id": source_id,
+                              "path": "svg_logs/svg_iter999999.svg"}],
+              },
+          ).status_code == 400)
+
+    check("sources/a-path-that-escapes-the-run-directory-is-refused",
+          harness.client.post(
+              "/api/jobs",
+              json={
+                  "target_sha256": sha256,
+                  "target_epoch": 100,
+                  "params": {"num_iter": 1000},
+                  "inputs": [{"role": "avoid", "source_kind": "job",
+                              "source_job_id": source_id,
+                              "path": "../../../../etc/passwd"}],
+              },
+          ).status_code == 400)
+
+
+# -- deleting a ticked selection --------------------------------------------
+
+
+def test_bulk_delete(harness, sha256):
+    """``delete_jobs``: what the rail's "Delete 7" button sends.
+
+    The dialog states a count and a byte figure before it asks, and both come
+    from this endpoint's dry run of the same selection it then performs -- so
+    what is checked here is that the two agree, and that the dry run really
+    does nothing.
+    """
+    print("\n--- deleting a ticked selection (delete_jobs)")
+    doomed = [
+        harness.create_job(sha256, target_epoch=100, num_iter=1000, title=f"bulk {index}")["id"]
+        for index in range(3)
+    ]
+    spared = harness.create_job(sha256, target_epoch=100, num_iter=1000, title="spared")["id"]
+    for job_id in doomed:
+        harness.await_state(job_id, "waiting", timeout=90)
+
+    dry = harness.client.post(
+        "/api/maintenance/cleanup",
+        json={"action": "delete_jobs", "job_ids": doomed, "dry_run": True},
+    ).json()
+    check("bulk-delete/dry-run-counts-exactly-what-was-ticked",
+          dry["job_count"] == 3 and sorted(item["id"] for item in dry["items"]) == sorted(doomed),
+          str(dry["job_count"]))
+    check("bulk-delete/dry-run-reports-bytes", dry["bytes"] > 0, str(dry["bytes"]))
+    check("bulk-delete/dry-run-did-not-act",
+          all(harness.client.get(f"/api/jobs/{job_id}").status_code == 200 for job_id in doomed))
+
+    check("bulk-delete/an-unknown-id-fails-the-whole-call",
+          harness.client.post(
+              "/api/maintenance/cleanup",
+              json={"action": "delete_jobs", "job_ids": doomed + ["01NOSUCHJOB"],
+                    "dry_run": False},
+          ).status_code == 404)
+    check("bulk-delete/nothing-was-deleted-by-the-refused-call",
+          all(harness.client.get(f"/api/jobs/{job_id}").status_code == 200 for job_id in doomed))
+
+    real = harness.client.post(
+        "/api/maintenance/cleanup",
+        json={"action": "delete_jobs", "job_ids": doomed, "dry_run": False},
+    ).json()
+    check("bulk-delete/real-run-matches-the-dry-run-count", real["job_count"] == dry["job_count"])
+    check("bulk-delete/real-run-matches-the-dry-run-bytes", real["bytes"] == dry["bytes"])
+    check("bulk-delete/all-of-them-are-gone",
+          wait_for(
+              lambda: all(
+                  harness.client.get(f"/api/jobs/{job_id}").status_code == 404
+                  for job_id in doomed
+              ),
+              timeout=30, what="the ticked jobs to be reclaimed",
+          ))
+    check("bulk-delete/their-directories-are-gone",
+          not any((harness.root / "jobs" / job_id).exists() for job_id in doomed))
+    check("bulk-delete/the-unticked-job-survives",
+          harness.client.get(f"/api/jobs/{spared}").status_code == 200)
+
+    check("bulk-delete/an-empty-selection-is-a-no-op",
+          harness.client.post(
+              "/api/maintenance/cleanup",
+              json={"action": "delete_jobs", "job_ids": [], "dry_run": False},
+          ).json()["job_count"] == 0)
+
+
 # -- runner -----------------------------------------------------------------
 
 
@@ -564,6 +766,8 @@ def main():
         test_marks(harness, sha256)
         test_lineage_and_filters(harness, sha256, parent_id)
         test_global_events(harness, sha256)
+        test_constraint_sources(harness, sha256)
+        test_bulk_delete(harness, sha256)
         test_cleanup(harness, sha256)
     finally:
         failures = [label for label, passed in RESULTS if not passed]

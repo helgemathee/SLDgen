@@ -17,6 +17,7 @@ import {
 } from '../lib/formstate'
 import { formatDuration, meanItersPerSec } from '../lib/format'
 import { SPEC_BY_NAME, validateParams, type ParamSection } from '../lib/params'
+import { overlayUrl } from '../lib/sources'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 
@@ -115,16 +116,16 @@ export function NewJobPage() {
   )
   const estimate = rate ? formatDuration(form.targetEpoch / rate) : null
 
+  // Every chosen constraint drawn over the target, so a frame picked from
+  // another job is checked for registration before the job is queued rather
+  // than after twenty minutes of GPU time. `overlayUrl` knows where each kind
+  // of source lives -- an upload answers from the content-addressed store.
   const overlays = INPUT_ROLES.flatMap((role) => {
     const field = form.optional[role]
     if (!field?.enabled) return []
     return (field.inputs ?? [])
-      .filter((reference) => (reference.path ?? '').endsWith('.svg'))
-      .map((reference) =>
-        reference.source_kind === 'job'
-          ? `/api/jobs/${reference.source_job_id}/files/target/run/${reference.path}`
-          : `/api/partitions/${reference.source_partition_id}/files/${reference.path}`,
-      )
+      .map(overlayUrl)
+      .filter((url): url is string => url !== null)
   })
 
   const submit = async () => {
@@ -385,6 +386,7 @@ export function NewJobPage() {
                 jobs={jobs}
                 partitions={partitions}
                 onChange={(patch) => setOptional(role, patch)}
+                onError={toast}
               />
             ))}
 

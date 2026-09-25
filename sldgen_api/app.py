@@ -508,11 +508,15 @@ def create_app(config=None):
         Two things the UI must say out loud are decided here rather than in the
         browser, because both depend on files the browser cannot see:
 
-        ``rescaled`` -- ``increase_object_size`` runs only on the final export, so
-        when ``--object-size-ratio`` actually rescaled the object, everything in
-        ``svg_logs/`` is in a different coordinate space than ``final_sld.svg``.
-        The UI greys out "use this frame as an avoid/attract/init source" when
-        this is true; the API refuses it outright (``jobs._guard_coordinate_space``).
+        ``rescaled`` -- whether ``svg_logs/`` is in a different coordinate space
+        than ``final_sld.svg``, in which case a frame cannot be used as an
+        avoid/attract/init source. Answered by comparing the canvases the two
+        files actually declare, which is the same question
+        ``jobs.coordinate_space_mismatch`` asks at submission -- so the UI never
+        offers a frame the API would then refuse, and never withholds one it
+        would have accepted. (It used to be inferred from ``scale_w`` in
+        config.json, which made it true for almost every run; see that
+        function for why that premise does not hold.)
 
         ``save_interval`` -- frames exist only at that granularity, so the
         scrubber is stepwise and should not pretend otherwise.
@@ -542,16 +546,18 @@ def create_app(config=None):
                 }
             )
 
+        # Asked of the newest frame: they all come from the same renderer at the
+        # same canvas size, so one answers for the lot.
         rescaled = False
-        config_path = run_dir / "config.json"
-        if config_path.exists():
-            try:
-                recorded = json.loads(config_path.read_text())
-                rescaled = any(
-                    recorded.get(key) not in (None, "None") for key in ("scale_w", "scale_h")
+        if frames:
+            newest = frames[-1]["svg"]
+            if newest:
+                rescaled = (
+                    job_files.coordinate_space_mismatch(
+                        config, job_id, str(Path(newest).relative_to("target/run"))
+                    )
+                    is not None
                 )
-            except (OSError, ValueError):
-                rescaled = False
 
         final_svg = run_dir / "final_sld.svg"
         return {

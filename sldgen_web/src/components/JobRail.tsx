@@ -5,6 +5,7 @@ import { ERROR_COPY, formatAgo, formatDuration, jobLabel } from '../lib/format'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 import { JobThumb } from './JobThumb'
+import { SelectionActions } from './SelectionActions'
 import { Ring } from './Ring'
 
 export type RailSort = 'newest' | 'longest'
@@ -51,7 +52,7 @@ export function JobRail({
   selectedId: string | null
   focusedId: string | null
 }) {
-  const { jobs, selection, toggleSelected, setSelection, stateFilter, setStateFilter } = useApp()
+  const { jobs, selection, toggleSelected, stateFilter, setStateFilter } = useApp()
   const states = stateFilter
   const setStates = setStateFilter
   const [text, setText] = useState('')
@@ -98,21 +99,7 @@ export function JobRail({
             {sort === 'newest' ? 'newest' : 'longest running'}
           </button>
         </div>
-        {selection.length > 0 && (
-          <div className="btn-row">
-            <button
-              type="button"
-              className="btn btn--small btn--primary"
-              disabled={selection.length < 2}
-              onClick={() => navigate({ name: 'compare', ids: selection })}
-            >
-              Compare {selection.length}
-            </button>
-            <button type="button" className="btn btn--small" onClick={() => setSelection([])}>
-              Clear
-            </button>
-          </div>
-        )}
+        <SelectionActions compact />
       </div>
 
       <div className="rail__list">

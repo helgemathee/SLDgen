@@ -358,16 +358,28 @@ def test_inputs_are_copied_not_referenced():
         shutil.rmtree(config.root, ignore_errors=True)
 
 
+SVG = '<?xml version="1.0" ?>\n<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">\n<g/></svg>'
+
+
 def test_coordinate_space_guard():
-    """Spec 2 SS4.3: an intermediate SVG from a rescaled run would misregister silently."""
+    """Spec 2 SS4.3: an input that cannot register with the target is refused.
+
+    Measured from the canvases the files declare, not inferred from
+    ``scale_w`` in config.json. The old rule refused the intermediates of any
+    run with ``--object-size-ratio`` set -- which is nearly all of them, and
+    wrongly: ``increase_object_size`` writes to ``renderer.shapes`` and
+    ``save_svg`` rebuilds those from the control points, so the rescale reaches
+    neither ``final_sld.svg`` nor ``svg_logs/``. See
+    ``jobs.coordinate_space_mismatch``.
+    """
     config = temp_config()
     store = Store(config)
     try:
-        source = make_job(store, config, title="rescaled")
+        source = make_job(store, config, title="mismatched")
         run_dir = config.run_dir(source["id"])
         (run_dir / "svg_logs").mkdir(parents=True, exist_ok=True)
-        (run_dir / "final_sld.svg").write_text("<svg/>")
-        (run_dir / "svg_logs" / "svg_iter100.svg").write_text("<svg/>")
+        (run_dir / "final_sld.svg").write_text(SVG.format(w=512, h=512))
+        (run_dir / "svg_logs" / "svg_iter100.svg").write_text(SVG.format(w=1024, h=1024))
         (run_dir / "config.json").write_text(json.dumps({"scale_w": "0.6", "scale_h": "0.6"}))
 
         digest, _ = job_files.store_upload(config, PNG)
@@ -386,25 +398,43 @@ def test_coordinate_space_guard():
             message = ""
         except job_files.JobError as exc:
             refused, message = True, str(exc)
-        ok = check("inputs/reject-rescaled-intermediate",
-                   refused and "coordinate space" in message)
+        ok = check("inputs/reject-intermediate-on-a-different-canvas",
+                   refused and "coordinate space" in message, message)
 
         job = attempt("final_sld.svg")
-        ok = check("inputs/allow-final-svg-from-rescaled-run",
+        ok = check("inputs/allow-final-svg-whatever-the-intermediates-say",
                    job["params"]["avoid"] is not None) and ok
 
-        # An unrescaled run has no such hazard.
-        plain = make_job(store, config, title="unrescaled")
+        # The case the old rule got wrong: object_size_ratio set, and the two
+        # files nevertheless on the same canvas -- which is what SLDgen writes.
+        plain = make_job(store, config, title="same-canvas")
         plain_run = config.run_dir(plain["id"])
         (plain_run / "svg_logs").mkdir(parents=True, exist_ok=True)
-        (plain_run / "svg_logs" / "svg_iter100.svg").write_text("<svg/>")
-        (plain_run / "config.json").write_text(json.dumps({"num_iter": "1000"}))
+        (plain_run / "final_sld.svg").write_text(SVG.format(w=512, h=512))
+        (plain_run / "svg_logs" / "svg_iter100.svg").write_text(SVG.format(w=512, h=512))
+        (plain_run / "config.json").write_text(
+            json.dumps({"num_iter": "1000", "scale_w": "0.864", "scale_h": "0.867"})
+        )
         job = job_files.create_job(
             store, config, target_sha256=digest, params=canonical_params({}), target_epoch=100,
             inputs=[{"role": "avoid", "source_kind": "job", "source_job_id": plain["id"],
                      "path": "svg_logs/svg_iter100.svg"}],
         )
-        ok = check("inputs/allow-intermediate-from-unrescaled-run",
+        ok = check("inputs/allow-intermediate-on-the-same-canvas",
+                   job["params"]["avoid"] is not None) and ok
+
+        # A job still running has no final SVG to disagree with, and its frames
+        # are exactly what "avoid that run at 1700" means.
+        live = make_job(store, config, title="still-running")
+        live_run = config.run_dir(live["id"])
+        (live_run / "svg_logs").mkdir(parents=True, exist_ok=True)
+        (live_run / "svg_logs" / "svg_iter1700.svg").write_text(SVG.format(w=512, h=512))
+        job = job_files.create_job(
+            store, config, target_sha256=digest, params=canonical_params({}), target_epoch=100,
+            inputs=[{"role": "avoid", "source_kind": "job", "source_job_id": live["id"],
+                     "path": "svg_logs/svg_iter1700.svg"}],
+        )
+        ok = check("inputs/allow-a-frame-of-a-job-with-no-final-yet",
                    job["params"]["avoid"] is not None) and ok
 
         # Path traversal must not be a way out of the source directory.

@@ -478,9 +478,17 @@ once it starts), **Curve** (control points, init method, width mode, seed),
 (origin, avoid, attract, init points, stipple weight), and **Losses**
 (the regularisation weights, collapsed by default).
 
-Constraint inputs that reference other jobs use a picker showing job thumbnails,
-restricted to `final_sld.svg` of completed jobs and to committed partitions,
-per §6.2's warning.
+Constraint inputs that reference other jobs use a picker with a search field
+over title, caption and id. Picking a job opens its contact sheet at picker
+size, with favourites starred, so the source can be *that job at iteration
+1700* rather than only its final curve; a job still running is offered too, its
+frames up to now being finished geometry. Committed partitions are listed
+below, and an SVG can be uploaded outright for geometry drawn elsewhere — the
+one case whose registration nothing can check, which the picker says.
+
+A job whose frames are in a different coordinate space than its `final_sld.svg`
+offers only the final, per §6.2's warning — measured from the canvases the
+files declare, so the picker offers exactly what the API will accept.
 
 Every optional parameter renders as a row with an enable toggle on the left and
 its value controls on the right, greyed but **not cleared** when disabled.
@@ -557,9 +565,14 @@ From the disk panel, and from rail multi-select:
 - Remove orphaned uploads no longer referenced by any job.
 
 Every action states the exact number of jobs and bytes it will free **before**
-confirmation. Deleting more than one job, or anything over 1 GB, requires typing
-the job count to confirm — friction proportional to consequence. Deletion is
-asynchronous (Spec 2 §10); affected rows show the `deleting` ring until gone.
+confirmation, from the server's own dry run of the action about to be performed.
+The disk panel's sweeps, which select a set the user has not seen, require
+typing the job count when they take more than one job or more than 1 GB —
+friction proportional to consequence. Deleting a ticked selection asks instead
+in a dialog naming the count ("delete these 7 jobs — this cannot be undone"),
+listing them, and calling out any that are still running; see §18 departure 8.
+Deletion is asynchronous (Spec 2 §10); affected rows show the `deleting` ring
+until gone.
 
 Logs are never pruned (Spec 2 §13.3) and the UI should say so where a user might
 expect otherwise.
@@ -718,6 +731,21 @@ time, so nothing was needed for batches.
 7. **The default tmux session is `sldgen-service`, not `sldgen`.** Discovered by
    collision: `sldgen` was already in use on the host.
 
+8. **Deleting a ticked selection asks in a dialog, not by typing the count.**
+   §11 applies the typed-count rule to everything over one job. The rule earns
+   its friction when the set was chosen by a *predicate* — "all failed jobs" may
+   be three or three hundred, and the user has not looked at them. A ticked
+   selection is the opposite: each job was ticked by hand and the dialog lists
+   them all with their state and size. What it does insist on saying is which of
+   them are still running, since that is the mistake that throws away GPU time
+   happening right now. The disk panel keeps the typed count unchanged.
+
+9. **The coordinate-space guard measures instead of inferring.** See Spec 2 §4.3
+   and "What the first real GPU run found" below: the rule that refused every
+   rescaled run's intermediates rested on a rescale that never reaches the
+   files. Refusing on a real canvas mismatch is what made "avoid that other job
+   at iteration 1700" possible at all.
+
 ### Answers to §17's open questions
 
 1. **Density brush vs selection — separate tools**, as specced, with the density
@@ -736,20 +764,24 @@ produced `input.png`, `mask.png`, `condition_depth.png`, paired frames and SVGs,
 a checkpoint, and a clean resume: segment 1 ran 0→20 fresh, segment 2 ran 20→40
 from `latest.pt`, both exit 0.
 
-It also settled something the spec treated as an edge case. **`rescaled` is true
+It also raised something the spec treated as an edge case. **`rescaled` was true
 for a default job**: `object_size_ratio` defaults to 0.75, which produced
-`scale_w 0.8`, so `svg_logs/` is in a different coordinate space than
-`final_sld.svg` on essentially *every* run. §6.2's warning is therefore not a
-rare caveat but permanent furniture, which is why it is styled as a quiet note
-rather than an alert — and why the constraint picker offers only `final_sld.svg`
-rather than trying to detect the exception.
+`scale_w 0.8`, and the flag was computed from that — so the constraint picker
+offered only `final_sld.svg` on essentially *every* run.
+
+That has since been corrected, because the premise did not hold: the rescale
+reaches neither `final_sld.svg` nor `svg_logs/` (see Spec 2 §4.3 for the code
+path and the measurement). `rescaled` is now computed by comparing the canvases
+the files declare, which is the same question the API asks at submission — so
+the picker offers exactly what will be accepted, §6.2's warning is once again a
+rare caveat, and a frame may be used as an avoid, attract or init source.
 
 ### Tests
 
 | Suite | Checks | Covers |
 |---|---|---|
-| `sldgen_web` vitest | 137 | Lab conversion against CIE reference values, flood fill (contiguous and global), feather monotonicity, brush falloff and clipping, ring geometry incl. the partially-completed case, log cooking against `logs.py`'s cases, the `{enabled, value}` persistence contract, variant seeds and duplicate detection, parameter validation, ETA and rate maths, reconnection backoff |
-| `test_service_web.py` | 69 | static serving, params/last surviving an API restart, presets, frames and the rescale flag, the API refusing a rescaled intermediate as an input, lineage and batches, the list filters, the global stream, and that cleanup's dry run reports exactly what the real run then does |
+| `sldgen_web` vitest | 177 | Lab conversion against CIE reference values, flood fill (contiguous and global), feather monotonicity, brush falloff and clipping, ring geometry incl. the partially-completed case, log cooking against `logs.py`'s cases, the `{enabled, value}` persistence contract, variant seeds and duplicate detection, parameter validation, ETA and rate maths, reconnection backoff |
+| `test_service_web.py` | 121 | static serving, params/last surviving an API restart, presets, frames and the rescale flag (measured, not inferred), the API refusing an intermediate on a different canvas and accepting one on the same canvas, a frame and an uploaded SVG as `--avoid` inputs, lineage and batches, the list filters, the global stream, and that cleanup's dry run reports exactly what the real run then does — `delete_jobs` included |
 
 Run them:
 

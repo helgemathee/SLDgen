@@ -218,12 +218,11 @@ export function Filmstrip({
         </p>
         {frames.rescaled && (
           <p className="warn" style={{ margin: 0 }}>
-            <strong>These intermediates are in a different coordinate space.</strong> This job
-            rescaled its object, and intermediate SVGs are written before that rescale runs — so
-            they do not register with <span className="mono">final_sld.svg</span>. They can be
-            viewed and downloaded, but only the final SVG may be used as an avoid, attract or init
-            source, or as a partition source. The API refuses the others rather than misregistering
-            them silently.
+            <strong>These intermediates are in a different coordinate space.</strong> They declare
+            a different canvas than <span className="mono">final_sld.svg</span>, so they do not
+            register with it. They can be viewed and downloaded, but only the final SVG may be
+            used as an avoid, attract or init source, or as a partition source. The API refuses
+            the others rather than misregistering them silently.
           </p>
         )}
       </div>

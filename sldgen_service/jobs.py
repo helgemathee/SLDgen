@@ -8,8 +8,8 @@ reproducible. A few hundred KB per edge buys that.
 """
 
 import hashlib
-import json
 import os
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -134,32 +134,87 @@ def _within(path, parent):
         return False
 
 
-def _guard_coordinate_space(config, source_job_id, role, relative):
-    """Spec 2 SS4.3: intermediate SVGs from a rescaled run are in a different space.
+#: ``width="512"`` / ``height="512"`` on the root element, which is the only
+#: thing an SVG SLDgen wrote says about the space its coordinates are in.
+_CANVAS_RE = re.compile(
+    rb"<svg\b[^>]*?\bwidth\s*=\s*[\"\'](?P<w>[0-9.]+)[^\"\']*[\"\']"
+    rb"[^>]*?\bheight\s*=\s*[\"\'](?P<h>[0-9.]+)",
+    re.IGNORECASE | re.DOTALL,
+)
 
-    ``increase_object_size`` applies only to the final export, so when
-    ``--object-size-ratio`` actually rescaled the object, ``svg_logs/`` lives in a
-    different coordinate space than ``final_sld.svg``. Feeding one to --avoid or
-    --attract would misregister silently, which is far worse than a refusal.
+
+def declared_canvas(path):
+    """The canvas an SVG declares, as ``(width, height)``, or None.
+
+    Only the root element's header is read -- these files are megabytes of path
+    data and the answer is in the first few hundred bytes.
     """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(2048)
+    except OSError:
+        return None
+    match = _CANVAS_RE.search(head)
+    if not match:
+        return None
+    try:
+        return float(match.group("w")), float(match.group("h"))
+    except ValueError:
+        return None
+
+
+def coordinate_space_mismatch(config, job_id, relative):
+    """Whether ``relative`` is in a different space than the job's final SVG.
+
+    Spec 2 SS4.3 guards against feeding --avoid or --attract geometry that does
+    not register with the target: the curve would then be pushed away from the
+    wrong place, silently, and you would not find out for twenty minutes.
+
+    The guard used to answer this from ``config.json``: ``scale_w``/``scale_h``
+    set meant "rescaled", meant refuse. That premise does not hold. ``run.py``
+    calls ``increase_object_size`` on ``renderer.shapes`` and then
+    ``save_svg``, which calls ``set_shapes()`` and *rebuilds* ``shapes`` from
+    the control points -- discarding the rescale, as run.py's own comment says
+    ("this rescale does not currently reach final_sld.svg... preserved
+    deliberately"). Measured on a real run with ``object_size_ratio 0.75``
+    (``scale_w 0.864``), ``final_sld.svg`` and ``svg_logs/svg_iter4000.svg``
+    declare the same 512x512 canvas and bound the same box to a tenth of a
+    pixel. Since ``object_size_ratio`` defaults to 0.75, the old rule refused
+    the intermediates of essentially *every* run -- geometry that registers
+    perfectly well.
+
+    So the question is asked of the files instead of a flag: if the two declare
+    different canvases they cannot register, and that is a refusal that is true
+    whenever it fires. If the final does not exist yet -- a job still running,
+    which is exactly when you want to reference its current frame -- there is
+    nothing to disagree with, and every frame came from the same renderer at
+    the same canvas size anyway.
+    """
+    run_dir = config.run_dir(job_id)
+    final = run_dir / "final_sld.svg"
+    if not final.exists():
+        return None
+    candidate = declared_canvas(run_dir / relative)
+    reference = declared_canvas(final)
+    if candidate is None or reference is None or candidate == reference:
+        return None
+    return candidate, reference
+
+
+def _guard_coordinate_space(config, source_job_id, role, relative):
+    """Refuse a spatial input that cannot register with the job's final SVG."""
     if role not in SPATIAL_ROLES or Path(relative).name == "final_sld.svg":
         return
-    config_path = config.run_dir(source_job_id) / "config.json"
-    if not config_path.exists():
+    mismatch = coordinate_space_mismatch(config, source_job_id, relative)
+    if mismatch is None:
         return
-    try:
-        recorded = json.loads(config_path.read_text())
-    except (OSError, ValueError):
-        return
-    if recorded.get("scale_w") not in (None, "None") or recorded.get("scale_h") not in (
-        None,
-        "None",
-    ):
-        raise JobError(
-            f"input role {role!r}: {relative} comes from a run whose object was rescaled "
-            "(scale_w/scale_h are set in its config.json), so it is in a different "
-            "coordinate space than final_sld.svg and would misregister. Use final_sld.svg."
-        )
+    candidate, reference = mismatch
+    raise JobError(
+        f"input role {role!r}: {relative} declares a "
+        f"{candidate[0]:g}x{candidate[1]:g} canvas but final_sld.svg declares "
+        f"{reference[0]:g}x{reference[1]:g}, so it is in a different coordinate space "
+        "and would misregister. Use final_sld.svg."
+    )
 
 
 def create_job(
