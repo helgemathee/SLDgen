@@ -63,18 +63,44 @@ export function findDuplicates(variant: Params, existing: JobSummary[]): JobSumm
   return existing.filter((job) => job.params && sameRun(variant, job.params))
 }
 
+const SEED_PART = /^s\d+$/i
+const NUMBER_PART = /^v\d+$/i
+
+/**
+ * The name somebody chose, with the parts that only told runs apart removed.
+ *
+ * A seed (`· s4050`, or `S4050` typed at the end) and a rename's `· v02` both
+ * describe the parent, not the family, so carrying them into a child would
+ * stack one seed per generation: `helge · s4050 · s4051 · s4052`.
+ */
+export function baseTitle(title: string): string {
+  const parts = title
+    .split(' · ')
+    .map((part) => part.trim())
+    .filter((part) => part && !SEED_PART.test(part) && !NUMBER_PART.test(part))
+  let base = parts.join(' · ')
+  // A seed typed by hand rather than by a rename: `helge S4050`.
+  let trimmed = base.replace(/\s+s\d+$/i, '')
+  while (trimmed !== base) {
+    base = trimmed
+    trimmed = base.replace(/\s+s\d+$/i, '')
+  }
+  return base || title.trim()
+}
+
 /**
  * `car_03 · s1042`, with the caption difference appended where one exists.
  *
  * Derived automatically and legibly, so a batch of five is readable in the rail
- * without opening anything.
+ * without opening anything. Built on the parent's chosen name rather than its
+ * whole title, so the parent's own seed is not carried along.
  */
 export function variantTitle(
   parentTitle: string,
   params: Params,
   parentParams: Params,
 ): string {
-  const parts = [parentTitle]
+  const parts = [baseTitle(parentTitle)]
   if (params.seed !== parentParams.seed) parts.push(`s${params.seed}`)
   if (params.caption !== parentParams.caption) {
     const caption = String(params.caption ?? '').trim()

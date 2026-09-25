@@ -7,6 +7,7 @@ import {
   randomSeedBlock,
   resizeVariants,
   sequentialSeeds,
+  baseTitle,
   variantTitle,
   type Variant,
 } from './variants'
@@ -146,6 +147,19 @@ describe('variantTitle', () => {
     expect(variantTitle('car_03', { ...parent }, parent)).toBe('car_03 · s1041')
   })
 
+  it('does not stack a seed on a name that already carries one', () => {
+    const parent4050 = { ...parent, seed: 4050 }
+    expect(variantTitle('helge · s4050', { ...parent4050, seed: 4051 }, parent4050)).toBe(
+      'helge · s4051',
+    )
+    expect(variantTitle('helge S4050', { ...parent4050, seed: 4051 }, parent4050)).toBe(
+      'helge · s4051',
+    )
+    expect(variantTitle('helge · s4050 · v02', { ...parent4050, seed: 4051 }, parent4050)).toBe(
+      'helge · s4051',
+    )
+  })
+
   it('truncates a long caption rather than filling the rail with it', () => {
     const long = 'a single line drawing of a very elaborate vintage racing car at speed'
     const title = variantTitle('car_03', { ...parent, caption: long }, parent)
@@ -174,5 +188,22 @@ describe('estimateBatchSeconds', () => {
   it('declines to estimate without a measured rate', () => {
     expect(estimateBatchSeconds(rows(3), 400, null)).toBeNull()
     expect(estimateBatchSeconds(rows(3), 400, 0)).toBeNull()
+  })
+})
+
+describe('baseTitle', () => {
+  it('keeps the chosen name and drops the parts that told runs apart', () => {
+    expect(baseTitle('helge · s4050 · s4051')).toBe('helge')
+    expect(baseTitle('helge S4050 s4051')).toBe('helge')
+    expect(baseTitle('car · s12 · side view')).toBe('car · side view')
+  })
+
+  it('leaves a name that merely contains an s and digits alone', () => {
+    expect(baseTitle('s500 bike')).toBe('s500 bike')
+    expect(baseTitle('helges4050')).toBe('helges4050')
+  })
+
+  it('falls back to the title rather than to nothing', () => {
+    expect(baseTitle('s4050')).toBe('s4050')
   })
 })

@@ -15,13 +15,21 @@ import { useJob } from '../state/useJob'
 
 export function JobPage({ jobId }: { jobId: string }) {
   const { job, frames, lineage, error, refresh } = useJob(jobId)
-  const { setSelection, toast } = useApp()
+  const { setSelection, toast, jobsById } = useApp()
   const [tab, setTab] = useState<ArtworkTab | null>(null)
   const [frameIndex, setFrameIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [segmentSeq, setSegmentSeq] = useState<number | null>(null)
   const [showLog, setShowLog] = useState(false)
   const [runAgainOpen, setRunAgainOpen] = useState(false)
+
+  // A rename from the rail (bulk or on another device) reaches the list, not
+  // this page's detail -- and run-again names its children after the detail.
+  const railTitle = jobsById.get(jobId)?.title
+  useEffect(() => {
+    if (job && railTitle !== undefined && railTitle !== job.title) refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the rail's title moves
+  }, [railTitle])
 
   // A failed job opens on the log, scrolled to the end, with the classified
   // error stated above it (Spec 3 SS6.4) -- that is the only thing you came for.
