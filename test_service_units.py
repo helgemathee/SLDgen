@@ -17,6 +17,7 @@ from pathlib import Path
 from sldgen_service import disk as disk_utils
 from sldgen_service import jobs as job_files
 from sldgen_service import logs as log_utils
+from sldgen_service import naming
 from sldgen_service import store as store_module
 from sldgen_service.config import ServiceConfig
 from sldgen_service.ids import is_ulid, new_ulid
@@ -710,6 +711,45 @@ def test_bind_addresses():
     return ok
 
 
+def test_bulk_titles():
+    def job(job_id, seed, created, title=None):
+        return {"id": job_id, "params": {"seed": seed}, "created_at": created, "title": title}
+
+    ok = True
+    # The seed is read from the parameters; a stale "· s1060" in the old title
+    # must not leak into the new one.
+    titles = naming.bulk_titles("owl", [job("A", 1046, "1", title="owl · s1060"),
+                                        job("B", 1047, "2")])
+    ok = check("rename/seed-from-params-not-title",
+               titles == {"A": "owl · s1046", "B": "owl · s1047"}, str(titles)) and ok
+
+    # Shared seeds are all numbered, in creation order, whatever order they came in.
+    titles = naming.bulk_titles("foo", [job("C", 7, "3"), job("A", 7, "1"), job("B", 8, "2")])
+    ok = check("rename/shared-seed-gets-v-numbers",
+               titles == {"A": "foo · s7 · v01", "C": "foo · s7 · v02", "B": "foo · s8"},
+               str(titles)) and ok
+
+    # A job outside the selection already holding the name forces a suffix, and
+    # taken v-numbers are skipped rather than reused.
+    titles = naming.bulk_titles("foo", [job("A", 7, "1"), job("B", 9, "2")],
+                                taken=["foo · s7", "foo · s9", "foo · s9 · v01"])
+    ok = check("rename/unique-against-unselected-jobs",
+               titles == {"A": "foo · s7 · v01", "B": "foo · s9 · v02"}, str(titles)) and ok
+
+    titles = naming.bulk_titles("  foo   bar ", [job("A", 1, "1")])
+    ok = check("rename/base-is-trimmed", titles == {"A": "foo bar · s1"}, str(titles)) and ok
+
+    refused = False
+    try:
+        naming.bulk_titles("   ", [job("A", 1, "1")])
+    except ValueError:
+        refused = True
+    ok = check("rename/blank-base-refused", refused) and ok
+    ok = check("rename/blank-single-title-clears",
+               naming.clean_title("  ") is None and naming.clean_title(" x  y ") == "x y") and ok
+    return ok
+
+
 def main():
     tests = (
         test_params_round_trip,
@@ -726,6 +766,7 @@ def main():
         test_disk_accounting,
         test_settings,
         test_bind_addresses,
+        test_bulk_titles,
     )
     ok = True
     for test in tests:

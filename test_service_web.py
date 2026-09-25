@@ -749,6 +749,54 @@ def test_bulk_delete(harness, sha256):
           ).json()["job_count"] == 0)
 
 
+def test_rename(harness, sha256):
+    """One job by PATCH, a ticked selection by ``/api/jobs/rename``.
+
+    The bulk name comes from each job's stored seed, never its title, and is
+    unique across every job -- so the checks plant a stale seed in a title and
+    an outsider already holding one of the names.
+    """
+    print("\n--- renaming")
+    single = harness.create_job(sha256, target_epoch=50, num_iter=1000, title="before", seed=5)
+    renamed = harness.client.patch(f"/api/jobs/{single['id']}", json={"title": "  after  "}).json()
+    check("rename/single-sets-trimmed-title", renamed["title"] == "after", renamed["title"])
+    cleared = harness.client.patch(f"/api/jobs/{single['id']}", json={"title": "   "}).json()
+    check("rename/single-blank-clears", cleared["title"] is None, repr(cleared["title"]))
+
+    outsider = harness.create_job(sha256, target_epoch=50, num_iter=1000,
+                                  title="batch · s2", seed=99)
+    picked = [
+        harness.create_job(sha256, target_epoch=50, num_iter=1000, title=title, seed=seed)["id"]
+        for title, seed in (("x · s1060", 1), ("y", 2), ("z", 3), ("w", 3))
+    ]
+    request = {"job_ids": picked, "base": "batch", "dry_run": True}
+    dry = harness.client.post("/api/jobs/rename", json=request).json()
+    proposed = [item["title"] for item in dry["items"]]
+    check("rename/bulk-names-from-seeds-with-collisions-numbered",
+          proposed == ["batch · s1", "batch · s2 · v01", "batch · s3 · v01", "batch · s3 · v02"],
+          str(proposed))
+    check("rename/bulk-dry-run-did-not-act",
+          harness.job(picked[0])["title"] == "x · s1060")
+
+    real = harness.client.post("/api/jobs/rename", json={**request, "dry_run": False}).json()
+    check("rename/bulk-real-run-matches-dry-run",
+          [item["title"] for item in real["items"]] == proposed)
+    check("rename/bulk-titles-landed",
+          [harness.job(job_id)["title"] for job_id in picked] == proposed)
+    check("rename/bulk-left-the-outsider-alone",
+          harness.job(outsider["id"])["title"] == "batch · s2")
+
+    check("rename/bulk-blank-base-is-400",
+          harness.client.post("/api/jobs/rename",
+                              json={"job_ids": picked, "base": " "}).status_code == 400)
+    check("rename/bulk-unknown-id-is-404",
+          harness.client.post("/api/jobs/rename",
+                              json={"job_ids": picked + ["01NOSUCHJOB"], "base": "q"}
+                              ).status_code == 404)
+    check("rename/bulk-refused-call-changed-nothing",
+          [harness.job(job_id)["title"] for job_id in picked] == proposed)
+
+
 # -- runner -----------------------------------------------------------------
 
 
@@ -768,6 +816,7 @@ def main():
         test_global_events(harness, sha256)
         test_constraint_sources(harness, sha256)
         test_bulk_delete(harness, sha256)
+        test_rename(harness, sha256)
         test_cleanup(harness, sha256)
     finally:
         failures = [label for label, passed in RESULTS if not passed]

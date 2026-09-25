@@ -272,6 +272,15 @@ class Store:
             )
         return self.get_job(job_id)
 
+    def set_titles(self, titles):
+        """``{job_id: title}`` in one transaction: a bulk rename lands whole or not at all."""
+        now = db.utcnow()
+        with self.transaction() as connection:
+            connection.executemany(
+                "UPDATE jobs SET title = ?, updated_at = ? WHERE id = ?",
+                [(title, now, job_id) for job_id, title in titles.items()],
+            )
+
     def set_params(self, job_id, params):
         return self.update_job(job_id, params_json=json.dumps(params, sort_keys=True))
 

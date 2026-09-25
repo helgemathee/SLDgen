@@ -232,6 +232,12 @@ export interface CleanupResult {
   items: { id: string; title: string | null; bytes: number }[]
 }
 
+/** `/api/jobs/rename`: the titles a bulk rename sets, or would set on a dry run. */
+export interface RenameResult {
+  dry_run: boolean
+  items: { id: string; old_title: string | null; title: string }[]
+}
+
 export interface UploadResult {
   sha256: string
   width: number | null

@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from sldgen_service import disk as disk_utils
 from sldgen_service import jobs as job_files
 from sldgen_service import logs as log_utils
+from sldgen_service import naming
 from sldgen_service import store as store_module
 from sldgen_service.config import ServiceConfig
 from sldgen_service.params import (
@@ -339,7 +340,7 @@ def create_app(config=None):
         job = require_job(job_id)
         fields = {}
         if "title" in body:
-            fields["title"] = body["title"]
+            fields["title"] = naming.clean_title(body["title"])
         if "priority" in body:
             fields["priority"] = int(body["priority"])
         if "target_epoch" in body:
@@ -378,6 +379,40 @@ def create_app(config=None):
         if fields:
             store.update_job(job_id, **fields)
         return job_detail(require_job(job_id))
+
+    @app.post("/api/jobs/rename")
+    def rename_jobs(body: dict = Body(...)):
+        """Bulk rename: ``base · s<seed>``, with ``· vNN`` wherever that collides.
+
+        ``dry_run`` answers with the titles it would set and sets nothing, so the
+        dialog's preview is this computation rather than a copy of it in the
+        browser. Names are unique across every job, not just the selection.
+        """
+        ids = list(dict.fromkeys(body.get("job_ids") or []))
+        targets = [store.get_job(job_id) for job_id in ids]
+        missing = [job_id for job_id, job in zip(ids, targets) if job is None]
+        if missing:
+            raise HTTPException(404, f"no such job(s): {', '.join(missing)}")
+        selected = set(ids)
+        taken = [
+            job["title"]
+            for job in store.list_jobs(limit=1_000_000)
+            if job["id"] not in selected
+        ]
+        try:
+            titles = naming.bulk_titles(body.get("base"), targets, taken)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        dry_run = bool(body.get("dry_run", False))
+        if not dry_run:
+            store.set_titles(titles)
+        return {
+            "dry_run": dry_run,
+            "items": [
+                {"id": job["id"], "old_title": job["title"], "title": titles[job["id"]]}
+                for job in targets
+            ],
+        }
 
     @app.delete("/api/jobs/{job_id}", status_code=202)
     def delete_job(job_id: str):

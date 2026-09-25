@@ -25,14 +25,24 @@ export function ActionsPanel({
   onRunAgain: () => void
   onChanged: () => void
 }) {
-  const { toast } = useApp()
+  const { toast, jobs } = useApp()
   const [promoteTo, setPromoteTo] = useState(job.num_iter)
+  const [title, setTitle] = useState(job.title ?? '')
   const [withCheckpoints, setWithCheckpoints] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     setPromoteTo(job.num_iter)
   }, [job.id, job.num_iter])
+
+  useEffect(() => {
+    setTitle(job.title ?? '')
+  }, [job.id, job.title])
+
+  const cleanTitle = title.trim().replace(/\s+/g, ' ')
+  const titleChanged = cleanTitle !== (job.title ?? '')
+  const titleTaken =
+    cleanTitle !== '' && jobs.some((other) => other.id !== job.id && other.title === cleanTitle)
 
   const run = async (label: string, action: () => Promise<unknown>) => {
     setBusy(true)
@@ -253,7 +263,35 @@ export function ActionsPanel({
 
         <hr className="rule" />
 
-        <div className="btn-row">
+        <form
+          className="btn-row"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!titleChanged || busy) return
+            run(cleanTitle ? `Renamed to ${cleanTitle}.` : 'Title cleared.', () =>
+              api.patchJob(job.id, { title: cleanTitle }),
+            )
+          }}
+        >
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 0 }}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={job.id.slice(-6)}
+            aria-label="Job title"
+          />
+          <button type="submit" className="btn" disabled={busy || !titleChanged}>
+            Rename
+          </button>
+        </form>
+        {titleChanged && titleTaken && (
+          <div className="note warn" style={{ marginTop: 4 }}>
+            Another job already has this name.
+          </div>
+        )}
+
+        <div className="btn-row" style={{ marginTop: 10 }}>
           <button
             type="button"
             className="btn btn--danger"

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 import { DeleteJobsDialog } from './DeleteJobsDialog'
+import { RenameJobsDialog } from './RenameJobsDialog'
 
 /**
  * What you can do with a ticked selection, wherever you ticked it.
@@ -13,6 +14,7 @@ import { DeleteJobsDialog } from './DeleteJobsDialog'
 export function SelectionActions({ compact = false }: { compact?: boolean }) {
   const { selection, setSelection } = useApp()
   const [confirming, setConfirming] = useState(false)
+  const [renaming, setRenaming] = useState(false)
 
   if (selection.length === 0) return null
 
@@ -26,6 +28,13 @@ export function SelectionActions({ compact = false }: { compact?: boolean }) {
           onClick={() => navigate({ name: 'compare', ids: selection })}
         >
           Compare {selection.length}
+        </button>
+        <button
+          type="button"
+          className={`btn${compact ? ' btn--small' : ''}`}
+          onClick={() => setRenaming(true)}
+        >
+          Rename {selection.length}
         </button>
         <button
           type="button"
@@ -43,6 +52,7 @@ export function SelectionActions({ compact = false }: { compact?: boolean }) {
         </button>
       </div>
 
+      {renaming && <RenameJobsDialog ids={selection} onClose={() => setRenaming(false)} />}
       {confirming && (
         <DeleteJobsDialog ids={selection} onClose={() => setConfirming(false)} />
       )}

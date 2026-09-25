@@ -13,6 +13,7 @@ import type {
   Partition,
   PartitionPreview,
   Preset,
+  RenameResult,
   UploadResult,
 } from './types'
 
@@ -109,6 +110,14 @@ export const api = {
 
   patchJob: (id: string, body: Record<string, unknown>) =>
     request<JobDetail>(`/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  /** Bulk rename to `base · s<seed>`, numbered where that collides. `dryRun`
+   *  previews with the same server code that then performs it. */
+  renameJobs: (ids: string[], base: string, dryRun: boolean) =>
+    request<RenameResult>(
+      '/api/jobs/rename',
+      json({ job_ids: ids, base, dry_run: dryRun }),
+    ),
 
   pause: (id: string) => request<JobSummary>(`/api/jobs/${id}/pause`, { method: 'POST' }),
   resume: (id: string) => request<JobSummary>(`/api/jobs/${id}/resume`, { method: 'POST' }),
