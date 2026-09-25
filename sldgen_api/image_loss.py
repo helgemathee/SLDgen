@@ -132,3 +132,53 @@ def edge_preview_png(config, source_job_id):
     if not path.exists():
         raise ImageLossError(f"no edge preview has been generated for {source_job_id}")
     return Path(path)
+
+
+class LandmarkError(ImageLossError):
+    """No face, or no MediaPipe: the request was fine, the image or host is not."""
+
+
+def landmarks_path(config, source_job_id):
+    return config.tmp_dir / f"landmarks-{source_job_id}.json"
+
+
+def run_landmarks(config, source_job_id, preset="portrait", timeout=120):
+    """Extract landmarks from a run's canvas, store them as an upload, describe them."""
+    if preset not in ("portrait", "all"):
+        raise ImageLossError("preset must be 'portrait' or 'all'")
+    image, _mask = source_images(config, source_job_id)
+    out_path = landmarks_path(config, source_job_id)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.unlink(missing_ok=True)
+
+    argv = [
+        str(config.sldgen_python),
+        str(config.landmark_script),
+        "--image",
+        str(image),
+        "--out",
+        str(out_path),
+        "--preset",
+        preset,
+    ]
+    completed = subprocess.run(  # noqa: S603 - argv is built here, not by a caller
+        argv, capture_output=True, text=True, timeout=timeout
+    )
+    if completed.returncode != 0:
+        lines = (completed.stderr or completed.stdout or "").strip().splitlines()
+        message = lines[-1] if lines else f"sld_landmarks.py exited {completed.returncode}"
+        # 2: no face found, 3: MediaPipe missing -- both unprocessable, not bad requests.
+        error = LandmarkError if completed.returncode in (2, 3) else ImageLossError
+        raise error(message)
+
+    payload = out_path.read_bytes()
+    digest, _ = job_files.store_upload(config, payload, suffix=".json")
+    data = json.loads(payload)
+    return {
+        "source_job_id": source_job_id,
+        "sha256": digest,
+        "count": len(data["landmarks"]),
+        "landmarks": data["landmarks"],
+        "image_size": data["image_size"],
+        "argv": argv,
+    }

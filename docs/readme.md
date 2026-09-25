@@ -10,7 +10,7 @@ interface to SLDgen. Written to be implemented in order.
 | [3 — Web UI](sldgen-spec-3-web-ui.md) | browser application | Spec 2 | not started |
 | [4 — Dual conditioning](sldgen-spec-4-dual-conditioning.md) | depth *and* canny in one run: `--condition-2`, `--condition-mode` | Specs 1–3 | 📝 design only, not started |
 | [5 — Canny attraction](sldgen-spec-5-canny-attraction.md) | `--attract-canny`: pull the curve onto the target's edges, with a preview in the UI | Specs 1–3 | ✅ implemented, not yet run on the GPU host |
-| [6 — Image fidelity loss](sldgen-spec-6-image-fidelity-loss.md) | `--image-loss`: a normalised gradient blend of SDS with a chamfer / pyramid / landmark term against the canvas image, end to end through service and UI | Specs 1–3, 5 | 📝 design corrected against the code (2026-09-25), not started |
+| [6 — Image fidelity loss](sldgen-spec-6-image-fidelity-loss.md) | `--image-loss`: a normalised gradient blend of SDS with a chamfer / pyramid / landmark term against the canvas image, end to end through service and UI | Specs 1–3, 5 | ✅ phases 1–5 implemented (2026-09-25), GPU-checked on 300-iteration runs; the §14 sweep is not yet run |
 
 Each completed spec ends with an **"As built"** section: what shipped, every
 place the implementation departed from the design and why, and what was
@@ -72,6 +72,9 @@ a stopped-then-resumed run produce a byte-identical `final_sld.svg`.
 | `test_service_units.py` | `.venv-service` | params, the state machine, the input DAG, logs, disk |
 | `test_service_e2e.py` | `.venv-service` | a **live** API and worker: the whole job lifecycle, with SLDgen stubbed |
 | `test_service_partitions.py` | both | the real `sld_partition.py`, all six strategies, driven by the API |
+| `test_image_loss_geom.py` | conda `sldgen` | Spec 6: schedule, blend, edge target, chamfer/pyramid/landmark, validation, the real painter |
+| `test_image_loss_run.py` | conda `sldgen` | Spec 6: `run()` with `--image-loss`, diffusion stubbed: opt-in guarantee, segmented == uninterrupted |
+| `test_service_image_loss.py` | `.venv-service`, with `SLDGEN_CANNY_PYTHON` = the conda python | Spec 6: params, input roles, fake run, edge preview and landmark endpoints |
 
 None of them needs a GPU. The service tests boot real daemons against a
 throwaway root; the only thing ever stubbed is SLDgen itself.

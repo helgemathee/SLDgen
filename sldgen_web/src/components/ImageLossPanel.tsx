@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
-import type { ImageLossPreview, JobInput, JobSummary, ParamValue, Params } from '../api/types'
+import type {
+  ImageLossPreview,
+  JobInput,
+  JobSummary,
+  LandmarkExtract,
+  ParamValue,
+  Params,
+} from '../api/types'
 import type { InputRef, OptionalField } from '../lib/formstate'
 import { scheduleSeries, sparkline } from '../lib/imageloss'
 import { IMAGE_LOSS_DEFAULT_START, SPEC_BY_NAME } from '../lib/params'
@@ -52,8 +59,18 @@ export function ImageLossPanel({
   const [busy, setBusy] = useState(false)
   const generation = useRef(0)
   const fileInput = useRef<HTMLInputElement>(null)
+  const jsonInput = useRef<HTMLInputElement>(null)
+  const [landmarks, setLandmarks] = useState<LandmarkExtract | null>(null)
+  const [landmarkProblem, setLandmarkProblem] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
 
   const inheritedTarget = inherited?.find((input) => input.role === 'image_loss_target')
+  const inheritedLandmarks = inherited?.find((input) => input.role === 'image_loss_landmarks')
+  const landmarkField = optional?.image_loss_landmarks
+  const wantsLandmarks = Number(params.image_loss_landmark) > 0
+  const hasLandmarks = Boolean(
+    inheritedLandmarks || (landmarkField?.enabled && landmarkField.inputs?.length),
+  )
   const editable = Boolean(onOptional)
   const showPreview = enabled && (source === 'derived' || source === 'prepared') && !inheritedTarget
 
@@ -106,13 +123,58 @@ export function ImageLossPanel({
 
   // A prepared map is only usable once its preview exists: until then the
   // attached upload is stale or missing, and submitting would run the wrong map.
+  // A landmark weight needs a landmark file, which the server also enforces.
   useEffect(() => {
     if (!onBlock) return
-    if (!enabled || source !== 'prepared') onBlock(null)
-    else if (busy) onBlock('The prepared edge map is still being built.')
-    else if (!preview) onBlock(problem ?? 'The prepared edge map needs a preview first (run this image once).')
+    if (!enabled) onBlock(null)
+    else if (source === 'prepared' && busy) onBlock('The prepared edge map is still being built.')
+    else if (source === 'prepared' && !preview)
+      onBlock(problem ?? 'The prepared edge map needs a preview first (run this image once).')
+    else if (wantsLandmarks && !hasLandmarks)
+      onBlock('The landmark term needs landmarks: extract them, or upload a JSON.')
     else onBlock(null)
-  }, [enabled, source, busy, preview, problem, onBlock])
+  }, [enabled, source, busy, preview, problem, wantsLandmarks, hasLandmarks, onBlock])
+
+  const extract = async () => {
+    if (!targetSha256) return
+    setExtracting(true)
+    try {
+      const result = await api.extractLandmarks({ target_sha256: targetSha256, preset: 'portrait' })
+      setLandmarks(result)
+      setLandmarkProblem(null)
+      onOptional?.('image_loss_landmarks', {
+        enabled: true,
+        value: null,
+        inputs: [
+          {
+            source_kind: 'upload',
+            sha256: result.sha256,
+            label: `${result.count} landmarks from job ${result.source_job_id.slice(-6)}`,
+          },
+        ],
+      })
+    } catch (error) {
+      setLandmarkProblem(error instanceof Error ? error.message : 'Could not extract landmarks')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  const receiveJson = async (file: File) => {
+    try {
+      const result = await api.upload(file, file.name)
+      setLandmarks(null)
+      onOptional?.('image_loss_landmarks', {
+        enabled: true,
+        value: null,
+        inputs: [{ source_kind: 'upload', sha256: result.sha256, label: file.name }],
+      })
+    } catch (error) {
+      setLandmarkProblem(error instanceof Error ? error.message : 'Upload failed')
+    } finally {
+      if (jsonInput.current) jsonInput.current.value = ''
+    }
+  }
 
   const chooseSource = (next: EdgeSource) => {
     setSource(next)
@@ -268,6 +330,90 @@ export function ImageLossPanel({
               Relative weights; 0 switches a term off. Chamfer pulls the line onto edges, pyramid
               matches where the ink sits at several scales, landmark keeps line near a few anchors.
             </div>
+
+            {wantsLandmarks && (
+              <>
+                <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
+                  Landmarks
+                </div>
+                {inheritedLandmarks ? (
+                  <div className="note mono">
+                    Inherited from the parent: {inheritedLandmarks.stored_path.split('/').pop()}
+                  </div>
+                ) : (
+                  <>
+                    {landmarkField?.enabled && landmarkField.inputs?.[0] && (
+                      <div className="note mono">
+                        Attached: {landmarkField.inputs[0].label ?? 'landmarks'}
+                      </div>
+                    )}
+                    <div className="btn-row">
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        disabled={!targetSha256 || extracting}
+                        onClick={extract}
+                      >
+                        {extracting ? 'Finding the face…' : 'Extract from a previous run'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        onClick={() => jsonInput.current?.click()}
+                      >
+                        Upload JSON…
+                      </button>
+                      <input
+                        ref={jsonInput}
+                        type="file"
+                        accept=".json,application/json"
+                        hidden
+                        onChange={(event) => {
+                          const file = event.target.files?.[0]
+                          if (file) receiveJson(file)
+                        }}
+                      />
+                    </div>
+                    {landmarks && (
+                      <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+                        <img
+                          src={landmarks.image_url}
+                          alt="Canvas-space target"
+                          style={{ maxWidth: '100%', maxHeight: 320, display: 'block' }}
+                        />
+                        {/* Canvas pixels in a viewBox of the canvas: registers exactly. */}
+                        <svg
+                          viewBox={`0 0 ${landmarks.image_size[0]} ${landmarks.image_size[1]}`}
+                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                          aria-label="Extracted landmarks"
+                        >
+                          {landmarks.landmarks.map((point) => (
+                            <circle
+                              key={point.name}
+                              cx={point.xy[0]}
+                              cy={point.xy[1]}
+                              r={1.5 + point.weight}
+                              fill="var(--st-running)"
+                              fillOpacity={0.75}
+                            >
+                              <title>
+                                {point.name} · weight {point.weight}
+                              </title>
+                            </circle>
+                          ))}
+                        </svg>
+                      </div>
+                    )}
+                    <div className="note">
+                      Face Mesh on a previous run's canvas image; dot size is the weight (eye
+                      corners and pupils heaviest, jaw lightest). A JSON from sld_landmarks.py works
+                      too, if it was made at this render size.
+                    </div>
+                    {landmarkProblem && <div className="warn">{landmarkProblem}</div>}
+                  </>
+                )}
+              </>
+            )}
 
             <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
               Edge map

@@ -1053,6 +1053,24 @@ def create_app(config=None):
             "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png",
         }
 
+    @app.post("/api/image-loss/landmarks")
+    def image_loss_landmarks(body: dict = Body(...)):
+        """Face landmarks from a previous run's canvas, stored as an upload.
+
+        422 when the image has no face or the host has no MediaPipe: the
+        request was well formed, the input cannot serve it.
+        """
+        source_job_id = image_loss_source(body)
+        try:
+            result = image_loss_utils.run_landmarks(
+                config, source_job_id, str(body.get("preset") or "portrait")
+            )
+        except image_loss_utils.LandmarkError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {**result, "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png"}
+
     @app.get("/api/image-loss/preview/{source_job_id}.png")
     def image_loss_preview_png(source_job_id: str):
         try:

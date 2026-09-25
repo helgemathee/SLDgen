@@ -309,6 +309,58 @@ def test_preview(config, source_job_id, target_digest):
     check("preview/script-error-is-400", bad.status_code == 400, bad.json().get("detail", "")[:100])
 
 
+def has_mediapipe(interpreter):
+    probe = subprocess.run([interpreter, "-c", "import mediapipe"], capture_output=True)
+    return probe.returncode == 0
+
+
+def test_landmarks(config, source_job_id, target_digest):
+    print("\n--- landmark extraction")
+    client = TestClient(create_app(config))
+    missing = client.post("/api/image-loss/landmarks", json={"target_sha256": "0" * 64})
+    check("landmarks/no-source-404", missing.status_code == 404, str(missing.status_code))
+
+    # The synthetic target has no face in it: unprocessable either way.
+    no_face = client.post("/api/image-loss/landmarks", json={"source_job_id": source_job_id})
+    check("landmarks/no-face-or-no-mediapipe-422", no_face.status_code == 422, no_face.text[:160])
+
+    if not has_mediapipe(str(config.sldgen_python)):
+        print("  (MediaPipe missing in the conda interpreter: skipping the face case)")
+        return
+
+    store = Store(config)
+    face_sha, _ = job_files.store_upload(config, (REPO_ROOT / "data" / "firefighter.png").read_bytes())
+    params = canonical_params({"num_iter": 2, "render_size": 512})
+    job = job_files.create_job(store, config, face_sha, params=params, target_epoch=2)
+    store.close()
+    completed, _ = run_segment(config, job["id"], params, 2)
+    check("landmarks/face-run-exit-0", completed.returncode == 0, completed.stderr[-200:])
+
+    found = client.post("/api/image-loss/landmarks", json={"target_sha256": face_sha})
+    check("landmarks/face-200", found.status_code == 200, found.text[:200])
+    if found.status_code != 200:
+        return
+    body = found.json()
+    check(
+        "landmarks/portrait-preset",
+        body["count"] >= 19 and body["image_size"] == [512, 512]
+        and {"left_eye_outer", "mouth_left", "chin"} <= {p["name"] for p in body["landmarks"]},
+        f"{body['count']} landmarks",
+    )
+    stored = client.get(f"/api/uploads/{body['sha256']}")
+    payload = stored.json() if stored.status_code == 200 else {}
+    check("landmarks/sha256-is-a-canvas-json-upload", payload.get("space") == "canvas")
+
+    store = Store(config)
+    job = job_files.create_job(
+        store, config, face_sha,
+        params={"image_loss": True, "image_loss_landmark": 1.0, "render_size": 512},
+        inputs=[{"role": "image_loss_landmarks", "source_kind": "upload", "sha256": body["sha256"]}],
+    )
+    store.close()
+    check("landmarks/attachable-as-input", job["params"]["image_loss_landmarks"].endswith(".json"))
+
+
 def interpreter_ready(interpreter):
     probe = subprocess.run(
         [interpreter, "-c", "import cv2, numpy, torch, PIL"], capture_output=True, text=True
@@ -328,6 +380,7 @@ def main():
         source_job_id, digest = test_run(config)
         test_roles(config, source_job_id, digest)
         test_preview(config, source_job_id, digest)
+        test_landmarks(config, source_job_id, digest)
     finally:
         shutil.rmtree(config.root, ignore_errors=True)
 

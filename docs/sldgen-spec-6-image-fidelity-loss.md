@@ -1,6 +1,6 @@
 # Spec 6 — Image fidelity loss (`--image-loss`)
 
-**Status:** 📝 **design, corrected against the code (2026-09-25), not started.**
+**Status:** ✅ **phases 1–5 implemented (2026-09-25); validation sweep (§14) not yet run.** See §15.
 **Scope:** a new opt-in loss term in SLDgen core, blended with SDS at the gradient
 level; its service parameters and two new input roles; two preview endpoints; a
 panel in the new-job form and in Run again; an edge-target tab and a diagnostics
@@ -959,5 +959,92 @@ for the series.
 
 ## 15. As built
 
-*(Filled in when the phases land: what shipped, every departure from this
-design and why, the two identity hashes from §12.1, and what was left undone.)*
+Implemented 2026-09-25 in five commits, one per phase (`db922cd`, `483c52a`,
+`108f09e`, `2b608c3`, and the phase 5 commit). Phase 6, the sweep in §14, has
+not been run.
+
+### Identity (§12.1)
+
+`output/firefighter/runseg_plain/final_sld.svg` from `test_run_segments.py`:
+`0f8f7b8ba98b0336427b281e5223298c44d8a7a799e2b37b6f6ca4d14a904db7` at the parent
+commit `b6acb7e` and again after phase 1, the same hash. Every suite that
+existed before still passes.
+
+### GPU checks (§12.6), firefighter, 300 iterations, 512 px
+
+| Run | Result |
+|---|---|
+| chamfer, alpha 1.0 | the curve lands on the edges: chamfer 2.08 → 0.65 px. 5.4 it/s, the same as without the term. Mean cosine 0.0003. **SDS norm 0.27–47.6 across the 300 steps**, the spread that motivated the gradient blend. |
+| pyramid, alpha 1.0 | pyramid 1.18 → 0.69, ink moves onto the figure's dark masses. 4.6 it/s (the second DiffVG pass). Mean cosine 0.03. |
+| chamfer + landmark, alpha 0.5 | 21 portrait landmarks from `sld_landmarks.py` on the run's own canvas. Landmark distance 2.67 → 0.64 px: the line passes through the eye/brow row, nose, mouth and chin anchors. Chamfer 2.08 → 1.19 px at half weight. Mean cosine −0.0005. |
+
+A 300-iteration run is not the full "obvious trace" of §12.6: the one-sided
+chamfer lets the line sit on *any* edge, so at 300 steps the result is
+edge-hugging line segments rather than a complete trace. Registration (no
+offset, flip or scale error) is unambiguous.
+
+### Departures from the design
+
+1. **The pyramid term renders its own raster** (`image_loss.render_again`),
+   instead of reusing the SDS raster as §6.2 has it. DiffVG's backward
+   accumulates into gradient buffers owned by the forward call's scene, so a
+   second backward through `raster_sld` returned `g_sds + g_pyramid`. The
+   first GPU pyramid run showed it as a cosine of 0.99999 with equal norms. A
+   fresh forward over the same shapes at the same fixed seed is the same image
+   with its own buffers. `test_pyramid_is_independent_of_the_sds_backward`
+   fails on the old behaviour. Consequently `ImageFidelityLoss.__call__` takes
+   `(renderer)`, not `(renderer, raster)`.
+2. **The CSV is not byte-identical across a resume, and cannot be.** DiffVG's
+   backward is not bit-deterministic: two *uninterrupted* runs of the same
+   config differ in the last digits of `sds_norm` and `cosine`. `final_sld.svg`
+   stays identical only because the SVG writer rounds. Floats are written at 7
+   significant digits, and the resume test compares the log row for row:
+   epochs, alphas and `skipped` exact, measured values to 1e-4 relative. The
+   SVG is still compared byte for byte.
+3. **Nearest neighbours without a live `cdist`.** Chamfer and landmark find
+   the nearest point under `no_grad` (a chunked `cdist`), then recompute that
+   one distance differentiably. The value and the (sub)gradient are the same as
+   `cdist(...).min()`, without keeping an `(S, K)` matrix alive for the
+   backward.
+4. **`skipped` is 0/1/2**: blended / image gradient vanished (g_sds kept) /
+   SDS gradient vanished (g_img used). An undefined cosine is an empty cell.
+5. **A supplied binary map with dark edges on white is inverted**, so a
+   hand-drawn black-on-white hairline works. The edges are taken to be the
+   minority value.
+6. **`sld_landmarks.py` falls back to a full-range detector.** Face Mesh's
+   built-in detector is short-range and found nothing on a full-figure canvas,
+   where the face is about 30 px wide. MediaPipe's full-range face detector
+   finds it; the mesh runs on an upscaled crop and is mapped back. Both paths
+   produce canvas pixels.
+7. **MediaPipe is pinned to 0.10.21** in the `sldgen` env. The latest (1.0.x)
+   needs numpy 2, which this env must not have, and drops the bundled Face
+   Mesh model. 0.10.21 kept numpy at 1.26.4 but replaced protobuf 7.35 with
+   4.25 (nothing in the env declares a protobuf requirement; `pip check` is
+   clean, and imports and GPU runs are unaffected) and added
+   `opencv-contrib-python` 4.11, the same version as the installed OpenCV.
+8. **Service**: the rule "landmark weight needs a landmarks file" is enforced
+   in `create_job` after inputs resolve, not in `validate_params` (which runs
+   before inputs are attached), and it knows which roles Run again is about to
+   inherit.
+9. **Web**: `NewJobPage`'s own `INPUT_ROLES` still lists only the four SVG
+   roles, because it drives `ConstraintPicker` and the SVG overlays. The two
+   new roles are owned by `ImageLossPanel` and handled through the shared
+   `INPUT_PARAMS` everywhere else. Image-loss inputs are only sent while the
+   gate is on. The Edge target tab is hidden, not disabled, on jobs without
+   the file. Submission is blocked while a prepared map is pending, or when
+   the landmark weight is set with no landmarks attached.
+10. **`test_service_canny.py` always skipped** before this work: it requires
+    cv2 in its *own* interpreter, and neither the service venv nor the conda
+    env has both fastapi and cv2. `test_service_image_loss.py` probes the
+    interpreter it spawns instead, so it runs.
+
+### Left undone
+
+- The validation sweep (§14). It needs a portrait target and about six
+  8000-iteration GPU runs, and queuing it is the author's call.
+- No browser check of the panels: the machine is headless. The logic is
+  covered by vitest (`imageloss.test.ts`, `params.test.ts`,
+  `formstate.test.ts`), typecheck and build. The first real use of the panel
+  is its UI test.
+- The API must be restarted to serve the new endpoints (`./stop.sh &&
+  ./start.sh`). `dist/` is already rebuilt.
