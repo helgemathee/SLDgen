@@ -47,6 +47,10 @@ class ServiceConfig:
     #: script: nothing about a deployment changes it, and a test building a
     #: config by hand should not have to know it exists.
     canny_script: Path = REPO_ROOT / "sld_canny_svg.py"
+    #: Spec 6 previews: the image-loss edge target and the landmark extractor.
+    #: Defaulted for the same reason as canny_script.
+    edge_script: Path = REPO_ROOT / "sld_edge_target.py"
+    landmark_script: Path = REPO_ROOT / "sld_landmarks.py"
     #: How often the worker re-reads a running segment's state.json (Spec 2 SS7:
     #: poll, don't watch -- no inotify watch limits, and it survives the atomic
     #: replace that writing state.json uses).
@@ -69,6 +73,8 @@ class ServiceConfig:
             sldgen_script=_env_path("SLDGEN_SCRIPT", REPO_ROOT / "sldgen.py"),
             partition_script=_env_path("SLDGEN_PARTITION_SCRIPT", REPO_ROOT / "sld_partition.py"),
             canny_script=_env_path("SLDGEN_CANNY_SCRIPT", REPO_ROOT / "sld_canny_svg.py"),
+            edge_script=_env_path("SLDGEN_EDGE_SCRIPT", REPO_ROOT / "sld_edge_target.py"),
+            landmark_script=_env_path("SLDGEN_LANDMARK_SCRIPT", REPO_ROOT / "sld_landmarks.py"),
             poll_interval=_env_float("SLDGEN_POLL_INTERVAL", 1.0),
             claim_interval=_env_float("SLDGEN_CLAIM_INTERVAL", 2.0),
             grace_seconds=_env_float("SLDGEN_GRACE_SECONDS", 120.0),

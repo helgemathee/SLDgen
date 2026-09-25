@@ -23,8 +23,23 @@ ROLE_PARAMS = {
     "attract": ("attract", True),
     "init_points": ("init_points", False),
     "stipple_weight": ("stipple_weight", False),
+    # Spec 6. Not spatial roles in the SVG sense: a PNG and a JSON whose size the
+    # run checks against --render-size itself.
+    "image_loss_target": ("image_loss_target", False),
+    "image_loss_landmarks": ("image_loss_landmarks", False),
     "labels": (None, False),  # partition input only; recorded for provenance
 }
+
+#: Params filled only through input roles: never set directly, nulled by Run
+#: again and re-pointed at the child's own copies.
+INPUT_PARAMS = (
+    "avoid",
+    "attract",
+    "init_points",
+    "stipple_weight",
+    "image_loss_target",
+    "image_loss_landmarks",
+)
 
 #: Roles whose meaning depends on the canvas coordinate space (Spec 1 SS7).
 SPATIAL_ROLES = ("avoid", "attract", "init_points")
@@ -228,8 +243,12 @@ def create_job(
     parent_job_id=None,
     batch_id=None,
     priority=0,
+    inherited_roles=(),
 ):
     """Create a job: validate, lay out its directory, copy every input, insert the row.
+
+    ``inherited_roles`` names the roles Run again will copy from the parent once
+    the row exists, so a requirement they satisfy is not refused here.
 
     The row is written last. If anything fails, what is left behind is an
     orphaned directory under ``jobs/`` that no row points at -- harmless, and
@@ -243,7 +262,7 @@ def create_job(
         upload = matches[0]
 
     params = validate_params(params or {})
-    for name in ("avoid", "attract", "init_points", "stipple_weight"):
+    for name in INPUT_PARAMS:
         if params[name] is not None:
             raise JobError(
                 f"{name} may not be set directly in params; declare it as an input so the "
@@ -288,6 +307,16 @@ def create_job(
 
     try:
         params = validate_params(params)
+        if (
+            params["image_loss"]
+            and params["image_loss_landmark"] > 0
+            and params["image_loss_landmarks"] is None
+            and "image_loss_landmarks" not in inherited_roles
+        ):
+            raise ParamError(
+                "image_loss_landmark > 0 needs an image_loss_landmarks input "
+                "(extract one from a previous run, or upload a JSON)"
+            )
     except ParamError as exc:
         shutil.rmtree(config.job_dir(job_id), ignore_errors=True)
         raise JobError(str(exc)) from exc
@@ -333,7 +362,7 @@ def run_again(store, config, source_job_id, variants=None, batch_id=None):
     for index, variant in enumerate(variants):
         overrides = dict(variant.get("params") or variant.get("params_overrides") or {})
         params = canonical_params({**source["params"], **overrides})
-        for name in ("avoid", "attract", "init_points", "stipple_weight"):
+        for name in INPUT_PARAMS:
             params[name] = None
 
         title = variant.get("title") or _variant_title(source, overrides, index)
@@ -352,6 +381,7 @@ def run_again(store, config, source_job_id, variants=None, batch_id=None):
             parent_job_id=source_job_id,
             batch_id=batch_id,
             priority=variant.get("priority", source["priority"]),
+            inherited_roles={record["role"] for record in store.list_inputs(source_job_id)},
         )
         _copy_parent_inputs(store, config, source_job_id, job["id"], source_inputs)
         created.append(store.get_job(job["id"]))
