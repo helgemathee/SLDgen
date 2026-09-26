@@ -10,6 +10,7 @@ import {
   panBy,
   parseFile,
   placedCount,
+  placementHint,
   serialize,
   withTemplate,
   zoomAbout,
@@ -157,5 +158,20 @@ describe('the view box', () => {
 
   it('normalises and clips a dragged box', () => {
     expect(boxFrom([300, 40], [-10, 600], SIZE)).toEqual([0, 40, 300, 512])
+  })
+})
+
+describe('placement hints', () => {
+  it('explains every template name', () => {
+    for (const entry of PROFILE_TEMPLATE) expect(placementHint(entry.name)).not.toMatch(/^Your own/)
+  })
+
+  it('reads sided detection names both ways round', () => {
+    expect(placementHint('left_eye_outer')).toMatch(/outer corner.*subject’s own left side.*image’s right/)
+    expect(placementHint('mouth_right')).toMatch(/corner of the mouth.*own right/)
+  })
+
+  it('falls back for the user’s own points', () => {
+    expect(placementHint('p3')).toMatch(/^Your own point/)
   })
 })

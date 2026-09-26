@@ -16,6 +16,7 @@ import {
   panBy,
   parseFile,
   placedCount,
+  placementHint,
   serialize,
   withTemplate,
   zoomAbout,
@@ -489,7 +490,7 @@ export function LandmarkEditor({
                       onPointerDown={(event) => onPointDown(event, point.id)}
                     >
                       <title>
-                        {point.name} · weight {point.weight} · {point.source}
+                        {`${point.name} · weight ${point.weight} · ${point.source}\n\n${placementHint(point.name)}`}
                       </title>
                     </circle>
                     {point.id === selected && (
@@ -572,7 +573,7 @@ export function LandmarkEditor({
                     key={point.id}
                     aria-selected={point.id === selected}
                     onClick={() => setSelected(point.id)}
-                    title={`${point.source}${point.edited ? ', edited' : ''}`}
+                    title={`${placementHint(point.name)}\n\n(${point.source}${point.edited ? ', edited' : ''})`}
                   >
                     <td>
                       <span className={`lm-swatch lm-dot--${point.source}`} />
@@ -657,7 +658,7 @@ export function LandmarkEditor({
 
       <div className="note">
         {placing
-          ? `Click the canvas to place ${placing.name}.`
+          ? `Click the canvas to place ${placing.name}: ${placementHint(placing.name)}`
           : mode === 'box'
             ? 'Drag a box around the face; detection runs inside it.'
             : 'Wheel to zoom, drag to pan, double-click to add, drag a dot to move it, arrow keys nudge the selected one (Shift for 5 px), Delete removes it.'}

@@ -285,3 +285,57 @@ export function boxFrom(
 export function dotRadius(weight: number): number {
   return 1.5 + weight
 }
+
+// -- placement hints -------------------------------------------------------------
+
+const HOW =
+  'The line is pulled to pass through this point, so put it exactly on the edge you want drawn.'
+
+/** Where each named landmark goes (Spec 7 SS6.3). Side-view names first. */
+export const PLACEMENT_HINT: Record<string, string> = {
+  brow_ridge: 'Side view: the most forward point of the brow bone on the outline, just above the eye.',
+  nasion: 'Side view: the deepest point of the dip between forehead and nose, on the outline, about level with the upper eyelid.',
+  eye: 'The outer corner of the visible eye, where the upper and lower lids meet (the corner toward the ear).',
+  pupil: 'The centre of the visible pupil. In a side view, the front edge of the iris.',
+  nose_tip: 'Side view: the most forward point of the nose on the outline.',
+  nostril: 'The back curve of the nostril wing, where it meets the cheek.',
+  subnasale: 'Side view: the inner corner where the underside of the nose meets the upper lip, on the outline.',
+  upper_lip: 'Side view: the most forward point of the upper lip on the outline.',
+  mouth_corner: 'The corner of the mouth, where the upper and lower lips meet at the side.',
+  stomion: 'Side view: the point on the outline where the lips meet.',
+  lower_lip: 'Side view: the most forward point of the lower lip on the outline.',
+  chin_front: 'Side view: the most forward point of the chin on the outline (with a beard, the beard’s outline).',
+  jaw_angle: 'The corner of the jaw below the ear, where the jawline turns upward.',
+  ear: 'On the outer rim of the ear: its back edge at about half the ear’s height, roughly level with the eye. For more of the ear’s shape, add a few low-weight points along the rim.',
+  // Front and three-quarter names (from detection). Left/right are the subject's own.
+  eye_outer: 'The outer corner of the eye, where the lids meet on the temple side.',
+  eye_inner: 'The inner corner of the eye, next to the nose.',
+  brow_outer: 'The outer end of the eyebrow.',
+  brow_mid: 'The top of the eyebrow’s arch.',
+  brow_inner: 'The inner end of the eyebrow, near the nose.',
+  mouth: 'The corner of the mouth, where the upper and lower lips meet.',
+  chin: 'The lowest point of the chin, on the face outline.',
+  jaw: 'On the jawline, about halfway between the chin and the corner of the jaw.',
+  cheek: 'On the face outline at the cheekbone, about level with the eyes.',
+}
+
+/** The placement hint for a name, handling `left_`/`_right` sides and `p1` points. */
+export function placementHint(name: string): string {
+  let side = ''
+  let part = name
+  for (const candidate of ['left', 'right']) {
+    if (name.startsWith(`${candidate}_`)) {
+      side = candidate
+      part = name.slice(candidate.length + 1)
+    } else if (name.endsWith(`_${candidate}`)) {
+      side = candidate
+      part = name.slice(0, -candidate.length - 1)
+    }
+  }
+  const hint = PLACEMENT_HINT[part]
+  if (!hint) return `Your own point. ${HOW}`
+  const which = side
+    ? ` This is the subject’s own ${side} side (on a face looking at the camera, their ${side} is on the image’s ${side === 'left' ? 'right' : 'left'}).`
+    : ''
+  return `${hint}${which} ${HOW}`
+}
