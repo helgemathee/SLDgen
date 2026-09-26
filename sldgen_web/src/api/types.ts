@@ -230,12 +230,26 @@ export interface ImageLossPreview {
   stdout: string
 }
 
-/** Landmarks extracted from a previous run's canvas (Spec 6 SS10.2). */
+/** Landmarks extracted from a previous run's canvas (Spec 6 SS10.2, Spec 7 SS5). */
 export interface LandmarkExtract {
   source_job_id: string
   sha256: string
   count: number
-  landmarks: { name: string; xy: [number, number]; weight: number }[]
+  landmarks: { name: string; xy: [number, number]; weight: number; source?: string }[]
+  image_url: string
+  image_size: [number, number]
+  view?: {
+    kind: 'frontal' | 'turned' | 'profile' | null
+    yaw: number | null
+    method: 'mesh' | 'pose'
+    facing: 'left' | 'right' | null
+  } | null
+  dropped?: string[]
+}
+
+/** The canvas of the latest run of an image, for the landmark editor (Spec 7 SS5). */
+export interface CanvasInfo {
+  source_job_id: string
   image_url: string
   image_size: [number, number]
 }

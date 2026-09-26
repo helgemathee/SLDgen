@@ -1322,3 +1322,156 @@ a {
 
 /* Motion: none (SS3). The progress ring advances because real progress
  * advanced it; there is no idle animation anywhere in the interface. */
+
+/* -- the landmark editor (Spec 7 SS6) ------------------------------------ */
+
+.lm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  outline: none;
+}
+
+.lm-editor__body {
+  display: flex;
+  gap: var(--gap);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.lm-editor__stage {
+  flex: 1 1 320px;
+  max-width: 560px;
+  min-width: 0;
+}
+
+.lm-editor__svg {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.lm-editor__svg:active {
+  cursor: grabbing;
+}
+
+.lm-editor__svg--box,
+.lm-editor__svg--place {
+  cursor: crosshair;
+}
+
+.lm-editor__zoom {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.lm-editor__table {
+  flex: 1 1 260px;
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+}
+
+.lm-editor__table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-xs);
+}
+
+.lm-editor__table th {
+  position: sticky;
+  top: 0;
+  background: var(--paper-sunk);
+  text-align: left;
+  font-weight: 600;
+  padding: 3px 4px;
+}
+
+.lm-editor__table td {
+  padding: 2px 4px;
+  border-top: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.lm-editor__table tr[aria-selected='true'] td {
+  background: var(--paper-sunk);
+}
+
+.lm-editor__table input {
+  font: inherit;
+  width: 58px;
+  padding: 1px 3px;
+}
+
+.lm-editor__table input[type='text'] {
+  width: 110px;
+}
+
+.lm-dot {
+  fill: var(--st-waiting);
+  fill-opacity: 0.75;
+  stroke: #fff;
+  cursor: move;
+}
+
+.lm-dot--pose {
+  fill: var(--st-running);
+}
+
+.lm-dot--silhouette {
+  fill: #be185d;
+}
+
+.lm-dot--manual,
+.lm-dot--edited {
+  fill: var(--st-complete);
+}
+
+.lm-dot--selected {
+  stroke: var(--ink);
+  fill-opacity: 1;
+}
+
+.lm-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.lm-label {
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 0.3em;
+  pointer-events: none;
+}
+
+.lm-box {
+  fill: rgba(79, 70, 229, 0.08);
+  stroke: var(--st-waiting);
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.lm-swatch.lm-dot--mesh {
+  background: var(--st-waiting);
+}
+.lm-swatch.lm-dot--pose {
+  background: var(--st-running);
+}
+.lm-swatch.lm-dot--silhouette {
+  background: #be185d;
+}
+.lm-swatch.lm-dot--manual {
+  background: var(--st-complete);
+}

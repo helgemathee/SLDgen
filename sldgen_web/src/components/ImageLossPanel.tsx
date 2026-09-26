@@ -4,7 +4,6 @@ import type {
   ImageLossPreview,
   JobInput,
   JobSummary,
-  LandmarkExtract,
   ParamValue,
   Params,
 } from '../api/types'
@@ -13,6 +12,7 @@ import { scheduleSeries, sparkline } from '../lib/imageloss'
 import { IMAGE_LOSS_DEFAULT_START, SPEC_BY_NAME } from '../lib/params'
 import { jobLabel } from '../lib/format'
 import { UI_HELP, paramTooltip } from '../lib/help'
+import { LandmarkEditor } from './LandmarkEditor'
 
 type EdgeSource = 'derived' | 'prepared' | 'file'
 
@@ -60,15 +60,13 @@ export function ImageLossPanel({
   const [busy, setBusy] = useState(false)
   const generation = useRef(0)
   const fileInput = useRef<HTMLInputElement>(null)
-  const jsonInput = useRef<HTMLInputElement>(null)
-  const [landmarks, setLandmarks] = useState<LandmarkExtract | null>(null)
-  const [landmarkProblem, setLandmarkProblem] = useState<string | null>(null)
-  const [extracting, setExtracting] = useState(false)
+  const [landmarksSaving, setLandmarksSaving] = useState(false)
 
   const inheritedTarget = inherited?.find((input) => input.role === 'image_loss_target')
   const inheritedLandmarks = inherited?.find((input) => input.role === 'image_loss_landmarks')
   const landmarkField = optional?.image_loss_landmarks
   const wantsLandmarks = Number(params.image_loss_landmark) > 0
+  const [tab, setTab] = useState<'edges' | 'landmarks'>(wantsLandmarks ? 'landmarks' : 'edges')
   const hasLandmarks = Boolean(
     inheritedLandmarks || (landmarkField?.enabled && landmarkField.inputs?.length),
   )
@@ -131,51 +129,11 @@ export function ImageLossPanel({
     else if (source === 'prepared' && busy) onBlock('The prepared edge map is still being built.')
     else if (source === 'prepared' && !preview)
       onBlock(problem ?? 'The prepared edge map needs a preview first (run this image once).')
+    else if (landmarksSaving) onBlock('The landmarks are still being saved.')
     else if (wantsLandmarks && !hasLandmarks)
-      onBlock('The landmark term needs landmarks: extract them, or upload a JSON.')
+      onBlock('The landmark term needs landmarks: detect or place them in the Landmarks tab.')
     else onBlock(null)
-  }, [enabled, source, busy, preview, problem, wantsLandmarks, hasLandmarks, onBlock])
-
-  const extract = async () => {
-    if (!targetSha256) return
-    setExtracting(true)
-    try {
-      const result = await api.extractLandmarks({ target_sha256: targetSha256, preset: 'portrait' })
-      setLandmarks(result)
-      setLandmarkProblem(null)
-      onOptional?.('image_loss_landmarks', {
-        enabled: true,
-        value: null,
-        inputs: [
-          {
-            source_kind: 'upload',
-            sha256: result.sha256,
-            label: `${result.count} landmarks from job ${result.source_job_id.slice(-6)}`,
-          },
-        ],
-      })
-    } catch (error) {
-      setLandmarkProblem(error instanceof Error ? error.message : 'Could not extract landmarks')
-    } finally {
-      setExtracting(false)
-    }
-  }
-
-  const receiveJson = async (file: File) => {
-    try {
-      const result = await api.upload(file, file.name)
-      setLandmarks(null)
-      onOptional?.('image_loss_landmarks', {
-        enabled: true,
-        value: null,
-        inputs: [{ source_kind: 'upload', sha256: result.sha256, label: file.name }],
-      })
-    } catch (error) {
-      setLandmarkProblem(error instanceof Error ? error.message : 'Upload failed')
-    } finally {
-      if (jsonInput.current) jsonInput.current.value = ''
-    }
-  }
+  }, [enabled, source, busy, preview, problem, wantsLandmarks, hasLandmarks, landmarksSaving, onBlock])
 
   const chooseSource = (next: EdgeSource) => {
     setSource(next)
@@ -333,94 +291,73 @@ export function ImageLossPanel({
               matches where the ink sits at several scales, landmark keeps line near a few anchors.
             </div>
 
-            {wantsLandmarks && (
-              <>
-                <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.landmarks}>
-                  Landmarks
-                </div>
-                {inheritedLandmarks ? (
-                  <div className="note mono">
-                    Inherited from the parent: {inheritedLandmarks.stored_path.split('/').pop()}
-                  </div>
-                ) : (
-                  <>
-                    {landmarkField?.enabled && landmarkField.inputs?.[0] && (
-                      <div className="note mono">
-                        Attached: {landmarkField.inputs[0].label ?? 'landmarks'}
-                      </div>
-                    )}
-                    <div className="btn-row">
-                      <button
-                        type="button"
-                        className="btn btn--small"
-                        disabled={!targetSha256 || extracting}
-                        title={UI_HELP.extractLandmarks}
-                        onClick={extract}
-                      >
-                        {extracting ? 'Finding the face…' : 'Extract from a previous run'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn--small"
-                        onClick={() => jsonInput.current?.click()}
-                      >
-                        Upload JSON…
-                      </button>
-                      <input
-                        ref={jsonInput}
-                        type="file"
-                        accept=".json,application/json"
-                        hidden
-                        onChange={(event) => {
-                          const file = event.target.files?.[0]
-                          if (file) receiveJson(file)
-                        }}
-                      />
-                    </div>
-                    {landmarks && (
-                      <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
-                        <img
-                          src={landmarks.image_url}
-                          alt="Canvas-space target"
-                          style={{ maxWidth: '100%', maxHeight: 320, display: 'block' }}
-                        />
-                        {/* Canvas pixels in a viewBox of the canvas: registers exactly. */}
-                        <svg
-                          viewBox={`0 0 ${landmarks.image_size[0]} ${landmarks.image_size[1]}`}
-                          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-                          aria-label="Extracted landmarks"
-                        >
-                          {landmarks.landmarks.map((point) => (
-                            <circle
-                              key={point.name}
-                              cx={point.xy[0]}
-                              cy={point.xy[1]}
-                              r={1.5 + point.weight}
-                              fill="var(--st-running)"
-                              fillOpacity={0.75}
-                            >
-                              <title>
-                                {point.name} · weight {point.weight}
-                              </title>
-                            </circle>
-                          ))}
-                        </svg>
-                      </div>
-                    )}
-                    <div className="note">
-                      Face Mesh on a previous run's canvas image; dot size is the weight (eye
-                      corners and pupils heaviest, jaw lightest). A JSON from sld_landmarks.py works
-                      too, if it was made at this render size.
-                    </div>
-                    {landmarkProblem && <div className="warn">{landmarkProblem}</div>}
-                  </>
-                )}
-              </>
-            )}
-
-            <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.edgeMap}>
-              Edge map
+            <div className="tabs" role="tablist" style={{ margin: '10px 0 6px' }}>
+              {(
+                [
+                  ['edges', 'Edge map', UI_HELP.edgeTab],
+                  ['landmarks', 'Landmarks', UI_HELP.landmarksTab],
+                ] as const
+              ).map(([value, label, help]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  className="tab"
+                  aria-selected={tab === value}
+                  title={help}
+                  onClick={() => setTab(value)}
+                >
+                  {label}
+                  {value === 'landmarks' && hasLandmarks ? ' ·' : ''}
+                </button>
+              ))}
             </div>
+
+            {/* Hidden rather than unmounted on the other tab: a debounced save
+                in flight must still land. */}
+            <div style={{ display: tab === 'landmarks' ? undefined : 'none' }}>
+              {inheritedLandmarks ? (
+                <div className="note mono">
+                  Inherited from the parent: {inheritedLandmarks.stored_path.split('/').pop()}
+                </div>
+              ) : editable ? (
+                <LandmarkEditor
+                  targetSha256={targetSha256}
+                  attachedSha256={
+                    landmarkField?.enabled && landmarkField.inputs?.[0]?.source_kind === 'upload'
+                      ? (landmarkField.inputs[0].sha256 ?? null)
+                      : null
+                  }
+                  edgeUrl={preview ? `${preview.edge_url}?v=${encodeURIComponent(preview.sha256)}` : null}
+                  termWeight={Number(params.image_loss_landmark)}
+                  renderSize={Number(params.render_size)}
+                  fallbackCanvas={
+                    preview
+                      ? {
+                          source_job_id: preview.source_job_id,
+                          image_url: preview.image_url,
+                          image_size: [Number(params.render_size), Number(params.render_size)],
+                        }
+                      : null
+                  }
+                  onAttach={(reference) =>
+                    onOptional?.(
+                      'image_loss_landmarks',
+                      reference
+                        ? { enabled: true, value: null, inputs: [reference] }
+                        : { enabled: false, inputs: [] },
+                    )
+                  }
+                  onPending={setLandmarksSaving}
+                  onEnableTerm={() => onChange('image_loss_landmark', 1)}
+                />
+              ) : (
+                <div className="note">No landmarks.</div>
+              )}
+            </div>
+
+            {tab === 'edges' && (
+              <>
             {inheritedTarget ? (
               <div className="note mono">
                 Inherited from the parent: {inheritedTarget.stored_path.split('/').pop()}
@@ -621,6 +558,8 @@ export function ImageLossPanel({
                   </div>
                 )}
                 {problem && preview && <div className="warn">{problem}</div>}
+              </>
+            )}
               </>
             )}
           </>

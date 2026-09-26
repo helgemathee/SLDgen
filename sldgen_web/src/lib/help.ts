@@ -190,6 +190,23 @@ export const UI_HELP = {
   density: 'The ink density you paint: 1 is full ink, 0 holds the ink back entirely.',
   feather: 'Softens the edge of the selection, so it fades rather than cuts.',
   cannyAttraction: PARAM_HELP.attract_canny,
+  edgeTab: 'The outlines the chamfer term pulls the line toward.',
+  landmarksTab:
+    'Key points the line should pass near. Detect them, place them by hand, move and weight them.',
+  lmAutoDetect:
+    'Find the face and fill in its points. Points you placed or moved are never overwritten; detected points now hidden by the head turn are removed.',
+  lmReplace: 'Throw the table away and use only what detection finds.',
+  lmBox:
+    'Drag a box around the face, and detect inside it only. Helps when the face is small or detection picks the wrong thing.',
+  lmTemplate:
+    'Add named rows for a side-view face (nose tip, lips, chin, …). Select a row, then click the canvas to place it.',
+  lmUpload: 'Load a landmark JSON made at this render size (for example by sld_landmarks.py).',
+  lmClear: 'Remove every landmark.',
+  lmShowEdges: 'Show the edge map under the points, to place them on real edges.',
+  lmName: 'A label for you; the run only uses position and weight.',
+  lmWeight:
+    'How strongly the line is pulled toward this point, relative to the others. 0 turns it off; dot size shows it.',
+  lmXY: 'Position in canvas pixels. Arrow keys nudge the selected point by half a pixel (Shift: 5).',
   constraintFiles: {
     avoid: PARAM_HELP.avoid,
     attract: PARAM_HELP.attract,
