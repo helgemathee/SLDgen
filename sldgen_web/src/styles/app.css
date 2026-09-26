@@ -1526,3 +1526,50 @@ a {
 .lm-swatch.lm-dot--manual {
   background: var(--st-complete);
 }
+
+/* Spec 7 addendum: points placed by the fitted head, and polylines. */
+.lm-dot--model {
+  fill: #0e7490;
+}
+.lm-swatch.lm-dot--model {
+  background: #0e7490;
+}
+
+.lm-line {
+  fill: none;
+  stroke: var(--st-complete);
+  stroke-opacity: 0.85;
+  stroke-linejoin: round;
+  cursor: pointer;
+}
+
+.lm-line--detected {
+  stroke: var(--st-waiting);
+}
+
+.lm-line--selected {
+  stroke-opacity: 1;
+}
+
+.lm-vertex {
+  fill: #fff;
+  stroke: var(--ink);
+  cursor: move;
+}
+
+.lm-vertex--selected {
+  fill: var(--st-complete);
+}
+
+.lm-swatch.lm-line-swatch {
+  border-radius: 0;
+  height: 3px;
+  background: var(--st-complete);
+}
+.lm-swatch.lm-line-swatch--detected {
+  background: var(--st-waiting);
+}
+
+.lm-editor__lines {
+  border-top: 2px solid var(--rule);
+}

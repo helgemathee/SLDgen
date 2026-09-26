@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  LANDMARK_SETS,
   PROFILE_TEMPLATE,
+  describePose,
+  glassesTemplate,
+  insertVertex,
+  lineCount,
+  lineHint,
+  mergeLines,
+  newLine,
+  savedLabel,
+  type EditorLine,
   boxFrom,
   clampView,
   fitView,
@@ -186,5 +196,184 @@ describe('references', () => {
   it('sends eye corners to the canthus page and detected points to the mesh map', () => {
     expect(referenceFor('left_eye_outer')?.url).toMatch(/Canthus/)
     expect(referenceFor('mouth_right')?.url).toMatch(/canonical_face_model/)
+  })
+})
+
+function line(overrides: Partial<EditorLine>): EditorLine {
+  return {
+    id: 'l',
+    name: 'line1',
+    xy: [
+      [0, 0],
+      [10, 0],
+    ],
+    closed: false,
+    weight: 1,
+    source: 'manual',
+    edited: true,
+    ...overrides,
+  }
+}
+
+describe('polylines in the file (Spec 7 addendum SS5)', () => {
+  it('round-trips lines and the pose report', () => {
+    const rim = line({ name: 'rim', closed: true, weight: 3, xy: [[1, 1], [9, 1], [5, 8.123]] })
+    const pose = { yaw: -18.4, pitch: 6.1, roll: -3.2, method: 'rigid-fit' as const, residual_px: 2 }
+    const file = serialize([point({ name: 'a', xy: [3, 4] })], SIZE, { lines: [rim], pose })
+    expect(file.polylines).toHaveLength(1)
+    expect(file.polylines![0].xy[2]).toEqual([5, 8.12])
+    expect(file.pose).toEqual(pose)
+    const back = parseFile(JSON.parse(JSON.stringify(file)))
+    if (typeof back === 'string') throw new Error(back)
+    expect(back.lines).toHaveLength(1)
+    expect(back.lines[0]).toMatchObject({ name: 'rim', closed: true, weight: 3, source: 'manual' })
+    expect(back.pose).toEqual(pose)
+  })
+
+  it('leaves out lines with too few vertices, and the key when none remain', () => {
+    const file = serialize([point({ name: 'a' })], SIZE, {
+      lines: [line({ xy: [[1, 1]] }), line({ closed: true })],
+    })
+    expect('polylines' in file).toBe(false)
+    expect('pose' in file).toBe(false)
+  })
+
+  it('reads detector files with polylines and skips broken ones', () => {
+    const back = parseFile({
+      space: 'canvas',
+      image_size: [512, 512],
+      landmarks: [],
+      polylines: [
+        { name: 'hairline', closed: false, weight: 1.5, source: 'hairline', xy: [[1, 2], [3, 4]] },
+        { name: 'bad', xy: [[1, 2]] },
+      ],
+    })
+    if (typeof back === 'string') throw new Error(back)
+    expect(back.lines.map((l) => l.name)).toEqual(['hairline'])
+    expect(back.lines[0].edited).toBe(false)
+  })
+
+  it('counts lines in the label', () => {
+    expect(savedLabel([point({})], [])).toBe('1 landmarks (edited)')
+    expect(savedLabel([point({})], [line({}), line({ weight: 0 }), line({ xy: [] })])).toBe(
+      '1 landmarks + 1 line (edited)',
+    )
+    expect(lineCount([line({}), line({ name: 'b' })])).toBe(2)
+  })
+})
+
+describe('mergeLines', () => {
+  const detected = [{ name: 'hairline', xy: [[0, 0], [5, 5]] as [number, number][], closed: false, weight: 1.5, source: 'hairline' }]
+
+  it('adds, updates unedited, keeps manual and edited, removes vanished', () => {
+    const fresh = mergeLines([], detected)
+    expect(fresh.added).toBe(1)
+    expect(fresh.lines[0].source).toBe('hairline')
+    const moved = mergeLines(
+      [{ ...fresh.lines[0], xy: [[9, 9], [8, 8]] }],
+      [{ ...detected[0], xy: [[1, 1], [2, 2]] }],
+    )
+    expect(moved.updated).toBe(1)
+    expect(moved.lines[0].xy).toEqual([[1, 1], [2, 2]])
+    const edited = mergeLines([{ ...fresh.lines[0], edited: true, xy: [[9, 9], [8, 8]] }], detected)
+    expect(edited.kept).toBe(1)
+    expect(edited.lines[0].xy).toEqual([[9, 9], [8, 8]])
+    const rim = line({ name: 'glasses_left_rim' })
+    const gone = mergeLines([fresh.lines[0], rim], [])
+    expect(gone.removed).toBe(1)
+    expect(gone.lines).toEqual([rim])
+  })
+})
+
+describe('insertVertex', () => {
+  const open: [number, number][] = [[0, 0], [10, 0], [20, 0]]
+
+  it('appends while the line is short', () => {
+    expect(insertVertex([], false, [1, 1])).toEqual({ xy: [[1, 1]], index: 0 })
+    expect(insertVertex([[0, 0]], false, [5, 5]).index).toBe(1)
+  })
+
+  it('inserts on the nearest segment', () => {
+    expect(insertVertex(open, false, [14, 2])).toEqual({ xy: [[0, 0], [10, 0], [14, 2], [20, 0]], index: 2 })
+  })
+
+  it('grows an open line at the end the click is beyond', () => {
+    expect(insertVertex(open, false, [25, 1]).index).toBe(3)
+    expect(insertVertex(open, false, [-5, 1]).index).toBe(0)
+  })
+
+  it('uses the closing segment of a closed line', () => {
+    const square: [number, number][] = [[0, 0], [10, 0], [10, 10], [0, 10]]
+    expect(insertVertex(square, true, [-1, 5])).toEqual({
+      xy: [[0, 0], [10, 0], [10, 10], [0, 10], [-1, 5]],
+      index: 4,
+    })
+  })
+})
+
+describe('glassesTemplate', () => {
+  const eyes = [
+    point({ name: 'right_eye_outer', xy: [180, 200] }),
+    point({ name: 'right_eye_inner', xy: [220, 200] }),
+    point({ name: 'left_eye_inner', xy: [290, 200] }),
+    point({ name: 'left_eye_outer', xy: [330, 200] }),
+  ]
+
+  it('rings each eye, the right rim on the image left', () => {
+    const lines = glassesTemplate(eyes, [], SIZE)
+    expect(lines.map((l) => l.name)).toEqual(['glasses_right_rim', 'glasses_left_rim', 'glasses_bridge'])
+    const [right, left, bridge] = lines
+    expect(right.closed && left.closed && !bridge.closed).toBe(true)
+    expect(right.xy).toHaveLength(12)
+    const cx = (l: EditorLine) => l.xy.reduce((sum, p) => sum + p[0], 0) / l.xy.length
+    expect(cx(right)).toBeCloseTo(200, 5)
+    expect(cx(left)).toBeCloseTo(310, 5)
+    expect(right.weight).toBe(3)
+    expect(bridge.xy[0][0]).toBeLessThan(bridge.xy[2][0])
+  })
+
+  it('skips names already present and works without eyes', () => {
+    const existing = line({ name: 'glasses_left_rim' })
+    const lines = glassesTemplate([], [existing], SIZE)
+    expect(lines.filter((l) => l.name === 'glasses_left_rim')).toEqual([existing])
+    expect(lines).toHaveLength(3)
+    const rim = lines.find((l) => l.name === 'glasses_right_rim')!
+    expect(rim.xy.every(([x, y]) => x > 0 && x < 512 && y > 0 && y < 512)).toBe(true)
+  })
+
+  it('mirrors a missing eye from the one that is there', () => {
+    const lines = glassesTemplate(eyes.slice(0, 2), [], SIZE)
+    const left = lines.find((l) => l.name === 'glasses_left_rim')!
+    expect(left.xy.reduce((sum, p) => sum + p[0], 0) / 12).toBeGreaterThan(250)
+  })
+})
+
+describe('sets, lines, pose text', () => {
+  it('offers the four sets, sparse first', () => {
+    expect(LANDMARK_SETS.map((s) => s.value)).toEqual(['sparse', 'standard', 'dense', 'pose-locked'])
+  })
+
+  it('names new lines line1, line2', () => {
+    const first = newLine([])
+    expect(first.name).toBe('line1')
+    expect(newLine([first]).name).toBe('line2')
+    expect(first.xy).toEqual([])
+  })
+
+  it('describes the pose', () => {
+    expect(describePose({ yaw: -18.4, pitch: 6.1, roll: -3.2, method: 'rigid-fit' })).toBe(
+      'yaw -18°, pitch 6°, roll -3°',
+    )
+    expect(describePose({ yaw: -78.6, pitch: null, roll: null, method: 'pose' })).toBe('yaw -79° (coarse)')
+    expect(describePose(null)).toBe('')
+  })
+
+  it('hints for mesh points, standard names and lines', () => {
+    expect(placementHint('m123')).toContain('Face-mesh point 123')
+    expect(referenceFor('m123')).not.toBeNull()
+    expect(placementHint('right_lip_peak')).toContain('cupid')
+    expect(placementHint('left_jaw_low')).toContain('jawline')
+    expect(lineHint('hairline')).toContain('forehead')
+    expect(lineHint('whatever')).toContain('Your own line')
   })
 })

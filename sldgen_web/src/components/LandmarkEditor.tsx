@@ -4,13 +4,23 @@ import type { CanvasInfo, LandmarkExtract } from '../api/types'
 import type { InputRef } from '../lib/formstate'
 import { UI_HELP } from '../lib/help'
 import {
+  LANDMARK_SETS,
   WEIGHT_MAX,
   boxFrom,
   clampWeight,
+  describePose,
   dotRadius,
   fitView,
   fromDetected,
+  fromDetectedLines,
+  glassesTemplate,
+  insertVertex,
+  lineCount,
+  lineHint,
+  lineIsValid,
   mergeDetected,
+  mergeLines,
+  newLine,
   newId,
   nextName,
   panBy,
@@ -19,11 +29,14 @@ import {
   placementHint,
   REFERENCES,
   referenceFor,
+  savedLabel,
   serialize,
   withTemplate,
   zoomAbout,
   zoomLevel,
+  type EditorLine,
   type EditorPoint,
+  type PoseReport,
   type ViewBox,
 } from '../lib/landmarks'
 
@@ -31,10 +44,9 @@ type Mode = 'select' | 'box'
 
 type Drag =
   | { kind: 'move'; id: string }
+  | { kind: 'vertex'; id: string; index: number }
   | { kind: 'pan'; startX: number; startY: number; view: ViewBox; moved: boolean }
   | { kind: 'box'; from: [number, number]; to: [number, number] }
-
-const LABEL_EDITED = 'landmarks (edited)'
 
 /**
  * The landmark editor (Spec 7 SS6): the canvas image with the points on it,
@@ -69,7 +81,14 @@ export function LandmarkEditor({
   const [canvas, setCanvas] = useState<CanvasInfo | null>(null)
   const [canvasProblem, setCanvasProblem] = useState<string | null>(null)
   const [points, setPoints] = useState<EditorPoint[]>([])
+  const [lines, setLines] = useState<EditorLine[]>([])
+  const [pose, setPose] = useState<PoseReport | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  /** The selected polyline, and one of its vertices (Spec 7 addendum SS8). */
+  const [selectedLine, setSelectedLine] = useState<string | null>(null)
+  const [selectedVertex, setSelectedVertex] = useState<number | null>(null)
+  const [landmarkSet, setLandmarkSet] = useState('sparse')
+  const [hairline, setHairline] = useState(false)
   const [view, setView] = useState<ViewBox | null>(null)
   const [mode, setMode] = useState<Mode>('select')
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -132,6 +151,8 @@ export function LandmarkEditor({
         savedSha.current = attachedSha256
         dirty.current = false
         setPoints(parsed.points)
+        setLines(parsed.lines)
+        setPose(parsed.pose)
       })
       .catch((error) => live && setProblem(error instanceof Error ? error.message : String(error)))
     return () => {
@@ -145,18 +166,18 @@ export function LandmarkEditor({
     onPending(true)
     const timer = window.setTimeout(async () => {
       try {
-        if (placedCount(points) === 0) {
+        if (placedCount(points) + lineCount(lines) === 0) {
           savedSha.current = null
           onAttach(null)
           return
         }
-        const body = JSON.stringify(serialize(points, imageSize))
+        const body = JSON.stringify(serialize(points, imageSize, { lines, pose }))
         const result = await api.upload(new Blob([body], { type: 'application/json' }), 'landmarks.json')
         savedSha.current = result.sha256
         onAttach({
           source_kind: 'upload',
           sha256: result.sha256,
-          label: `${placedCount(points)} ${LABEL_EDITED}`,
+          label: savedLabel(points, lines),
         })
         setProblem(null)
       } catch (error) {
@@ -166,7 +187,7 @@ export function LandmarkEditor({
       }
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [points]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [points, lines]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Never leave the form blocked on a save that can no longer happen.
   useEffect(() => () => onPending(false), []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -186,6 +207,40 @@ export function LandmarkEditor({
     if (selected === id) setSelected(null)
   }
 
+  const changeLines = useCallback(
+    (next: EditorLine[] | ((current: EditorLine[]) => EditorLine[])) => {
+      dirty.current = true
+      setLines(next)
+    },
+    [],
+  )
+
+  const updateLine = (id: string, patch: Partial<EditorLine>) =>
+    changeLines((current) =>
+      current.map((line) => (line.id === id ? { ...line, ...patch, edited: true } : line)),
+    )
+
+  const removeLine = (id: string) => {
+    changeLines((current) => current.filter((line) => line.id !== id))
+    if (selectedLine === id) {
+      setSelectedLine(null)
+      setSelectedVertex(null)
+    }
+  }
+
+  /** Select a point (or nothing), dropping any line selection. */
+  const selectPoint = (id: string | null) => {
+    setSelected(id)
+    setSelectedLine(null)
+    setSelectedVertex(null)
+  }
+
+  const selectLine = (id: string | null, vertex: number | null = null) => {
+    setSelectedLine(id)
+    setSelectedVertex(vertex)
+    setSelected(null)
+  }
+
   // -- detection ------------------------------------------------------------
 
   const detect = async (how: 'fill' | 'replace', box?: [number, number, number, number]) => {
@@ -196,19 +251,29 @@ export function LandmarkEditor({
       const result: LandmarkExtract = await api.extractLandmarks({
         target_sha256: targetSha256,
         preset: 'portrait',
+        landmark_set: landmarkSet,
+        include_hairline: hairline,
+        pose_report: true,
         ...(box ? { box } : {}),
       })
       const where = box ? ' in the box' : ''
       const seen = describeView(result)
+      const detectedLines = result.polylines ?? []
+      setPose(result.pose ?? null)
+      const extra = `${poseNote(result)}${setNote(result, landmarkSet)}${hairlineNote(result, hairline)}${droppedNote(result)}`
       if (how === 'replace') {
         change(fromDetected(result.landmarks))
-        setStatus(`${seen}${where}: ${result.landmarks.length} points.${droppedNote(result)}`)
+        changeLines(fromDetectedLines(detectedLines))
+        selectPoint(null)
+        setStatus(`${seen}${where}: ${result.landmarks.length} points.${extra}`)
       } else {
         const report = mergeDetected(points, result.landmarks)
+        const lineReport = mergeLines(lines, detectedLines)
         change(report.points)
+        changeLines(lineReport.lines)
         setStatus(
           `${seen}${where}: ${report.added} added, ${report.updated} updated, ${report.kept} of yours kept` +
-            `${report.removed ? `, ${report.removed} removed as hidden` : ''}.${droppedNote(result)}`,
+            `${report.removed ? `, ${report.removed} removed as hidden` : ''}.${extra}`,
         )
       }
     } catch (error) {
@@ -227,7 +292,12 @@ export function LandmarkEditor({
           `the file was made at ${parsed.imageSize.join('×')}, this canvas is ${imageSize.join('×')}`,
         )
       change(parsed.points)
-      setStatus(`Loaded ${parsed.points.length} points from ${file.name}.`)
+      changeLines(parsed.lines)
+      setPose(parsed.pose)
+      selectPoint(null)
+      setStatus(
+        `Loaded ${parsed.points.length} points${parsed.lines.length ? ` and ${parsed.lines.length} lines` : ''} from ${file.name}.`,
+      )
     } catch (error) {
       setProblem(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -281,8 +351,22 @@ export function LandmarkEditor({
     event.stopPropagation()
     if (mode === 'box') return onBackgroundDown(event)
     svg.current?.setPointerCapture(event.pointerId)
-    setSelected(id)
+    selectPoint(id)
     setDrag({ kind: 'move', id })
+  }
+
+  const onVertexDown = (event: React.PointerEvent, id: string, index: number) => {
+    event.stopPropagation()
+    if (mode === 'box') return onBackgroundDown(event)
+    svg.current?.setPointerCapture(event.pointerId)
+    selectLine(id, index)
+    setDrag({ kind: 'vertex', id, index })
+  }
+
+  const onLineDown = (event: React.PointerEvent, id: string) => {
+    if (mode === 'box') return
+    event.stopPropagation()
+    selectLine(id)
   }
 
   const onMove = (event: React.PointerEvent) => {
@@ -295,6 +379,15 @@ export function LandmarkEditor({
           Math.min(imageSize[1], Math.max(0, y)),
         ],
       })
+    } else if (drag.kind === 'vertex') {
+      const [x, y] = toCanvas(event.clientX, event.clientY)
+      const at: [number, number] = [
+        Math.min(imageSize[0], Math.max(0, x)),
+        Math.min(imageSize[1], Math.max(0, y)),
+      ]
+      const line = lines.find((entry) => entry.id === drag.id)
+      if (line)
+        updateLine(line.id, { xy: line.xy.map((vertex, k) => (k === drag.index ? at : vertex)) })
     } else if (drag.kind === 'pan') {
       const rect = svg.current!.getBoundingClientRect()
       const dx = ((event.clientX - drag.startX) * drag.view.w) / rect.width
@@ -308,7 +401,10 @@ export function LandmarkEditor({
   }
 
   const onUp = () => {
-    if (drag?.kind === 'pan' && !drag.moved) setSelected(null)
+    // A plain click on empty canvas deselects a point. A selected line stays
+    // selected (Esc ends it): double-clicking to add its vertices starts with
+    // two such clicks.
+    if (drag?.kind === 'pan' && !drag.moved && !selectedLine) selectPoint(null)
     if (drag?.kind === 'box') {
       const box = boxFrom(drag.from, drag.to, imageSize)
       setMode('select')
@@ -320,6 +416,13 @@ export function LandmarkEditor({
   const onDoubleClick = (event: React.MouseEvent) => {
     if (mode !== 'select') return
     const at = toCanvas(event.clientX, event.clientY)
+    const line = lines.find((entry) => entry.id === selectedLine)
+    if (line) {
+      const inserted = insertVertex(line.xy, line.closed, at)
+      updateLine(line.id, { xy: inserted.xy })
+      setSelectedVertex(inserted.index)
+      return
+    }
     const point: EditorPoint = {
       id: newId(),
       name: nextName(points),
@@ -329,15 +432,45 @@ export function LandmarkEditor({
       edited: true,
     }
     change((current) => [...current, point])
-    setSelected(point.id)
+    selectPoint(point.id)
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if ((event.target as HTMLElement).tagName === 'INPUT') return
     const target = points.find((point) => point.id === selected)
     if (event.key === 'Escape') {
-      setSelected(null)
+      selectPoint(null)
       setMode('select')
+      return
+    }
+    const line = lines.find((entry) => entry.id === selectedLine)
+    if (line) {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault()
+        if (selectedVertex === null) {
+          removeLine(line.id)
+        } else {
+          updateLine(line.id, { xy: line.xy.filter((_vertex, k) => k !== selectedVertex) })
+          setSelectedVertex(null)
+        }
+        return
+      }
+      const step = event.shiftKey ? 5 : 0.5
+      const move: Record<string, [number, number]> = {
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+      }
+      if (move[event.key] && selectedVertex !== null && line.xy[selectedVertex]) {
+        event.preventDefault()
+        const [dx, dy] = move[event.key]
+        updateLine(line.id, {
+          xy: line.xy.map((vertex, k) =>
+            k === selectedVertex ? ([vertex[0] + dx, vertex[1] + dy] as [number, number]) : vertex,
+          ),
+        })
+      }
       return
     }
     if (!target) return
@@ -367,11 +500,35 @@ export function LandmarkEditor({
   const scale = view ? view.w / imageSize[0] : 1 // canvas px per fit px: dots keep their screen size
   const placing = points.find((point) => point.id === selected && point.xy === null)
   const chosen = points.find((point) => point.id === selected) ?? null
-  const usable = placedCount(points)
+  const usable = placedCount(points) + lineCount(lines)
+  const chosenLine = lines.find((line) => line.id === selectedLine) ?? null
+  const setHelp = LANDMARK_SETS.find((entry) => entry.value === landmarkSet)?.help ?? ''
 
   return (
     <div className="lm-editor" onKeyDown={onKeyDown} tabIndex={-1}>
       <div className="btn-row" style={{ flexWrap: 'wrap' }}>
+        <label className="note" title={`${UI_HELP.lmSet}\n\n${setHelp}`}>
+          set{' '}
+          <select
+            value={landmarkSet}
+            aria-label="Landmark set"
+            onChange={(event) => setLandmarkSet(event.target.value)}
+          >
+            {LANDMARK_SETS.map((entry) => (
+              <option key={entry.value} value={entry.value} title={entry.help}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="note" title={UI_HELP.lmHairline}>
+          <input
+            type="checkbox"
+            checked={hairline}
+            onChange={(event) => setHairline(event.target.checked)}
+          />{' '}
+          hairline
+        </label>
         <button
           type="button"
           className="btn btn--small"
@@ -411,6 +568,28 @@ export function LandmarkEditor({
         <button
           type="button"
           className="btn btn--small"
+          title={UI_HELP.lmGlasses}
+          disabled={!canvas}
+          onClick={() => changeLines((current) => glassesTemplate(points, current, imageSize))}
+        >
+          Glasses
+        </button>
+        <button
+          type="button"
+          className="btn btn--small"
+          title={UI_HELP.lmLine}
+          disabled={!canvas}
+          onClick={() => {
+            const line = newLine(lines)
+            changeLines((current) => [...current, line])
+            selectLine(line.id)
+          }}
+        >
+          Line
+        </button>
+        <button
+          type="button"
+          className="btn btn--small"
           title={UI_HELP.lmUpload}
           disabled={!canvas}
           onClick={() => jsonInput.current?.click()}
@@ -430,11 +609,13 @@ export function LandmarkEditor({
         <button
           type="button"
           className="btn btn--small"
-          disabled={points.length === 0}
+          disabled={points.length === 0 && lines.length === 0}
           title={UI_HELP.lmClear}
           onClick={() => {
             change([])
-            setSelected(null)
+            changeLines([])
+            setPose(null)
+            selectPoint(null)
             setStatus(null)
           }}
         >
@@ -461,7 +642,7 @@ export function LandmarkEditor({
           <div className="lm-editor__stage">
             <svg
               ref={svg}
-              className={`lm-editor__svg${mode === 'box' ? ' lm-editor__svg--box' : ''}${placing ? ' lm-editor__svg--place' : ''}`}
+              className={`lm-editor__svg${mode === 'box' ? ' lm-editor__svg--box' : ''}${placing || chosenLine ? ' lm-editor__svg--place' : ''}`}
               viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
               onPointerDown={onBackgroundDown}
               onPointerMove={onMove}
@@ -481,6 +662,33 @@ export function LandmarkEditor({
                   style={{ mixBlendMode: 'multiply', opacity: 0.6, filter: 'invert(1)' }}
                 />
               )}
+              {lines.map((line) => (
+                <g key={line.id}>
+                  {line.xy.length >= 2 && (
+                    <path
+                      className={`lm-line lm-line--${line.source === 'manual' || line.edited ? 'manual' : 'detected'}${line.id === selectedLine ? ' lm-line--selected' : ''}`}
+                      d={`M${line.xy.map(([x, y]) => `${x},${y}`).join('L')}${line.closed && line.xy.length > 2 ? 'Z' : ''}`}
+                      strokeWidth={(line.id === selectedLine ? 2.5 : 1.5) * scale}
+                      onPointerDown={(event) => onLineDown(event, line.id)}
+                    >
+                      <title>{`${line.name} · weight ${line.weight} · ${line.xy.length} vertices\n\n${lineHint(line.name)}`}</title>
+                    </path>
+                  )}
+                  {(line.id === selectedLine || line.xy.length < 2) &&
+                    line.xy.map(([x, y], index) => (
+                      <rect
+                        key={index}
+                        className={`lm-vertex${line.id === selectedLine && index === selectedVertex ? ' lm-vertex--selected' : ''}`}
+                        x={x - 3 * scale}
+                        y={y - 3 * scale}
+                        width={6 * scale}
+                        height={6 * scale}
+                        strokeWidth={1.2 * scale}
+                        onPointerDown={(event) => onVertexDown(event, line.id, index)}
+                      />
+                    ))}
+                </g>
+              ))}
               {points.map((point) =>
                 point.xy ? (
                   <g key={point.id}>
@@ -575,7 +783,7 @@ export function LandmarkEditor({
                   <tr
                     key={point.id}
                     aria-selected={point.id === selected}
-                    onClick={() => setSelected(point.id)}
+                    onClick={() => selectPoint(point.id)}
                     title={`${placementHint(point.name)}\n\n(${point.source}${point.edited ? ', edited' : ''})`}
                   >
                     <td>
@@ -592,7 +800,7 @@ export function LandmarkEditor({
                         type="number"
                         min={0}
                         max={WEIGHT_MAX}
-                        step={0.5}
+                        step="any"
                         value={point.weight}
                         aria-label="Landmark weight"
                         onChange={(event) =>
@@ -655,6 +863,75 @@ export function LandmarkEditor({
                 )}
               </tbody>
             </table>
+            {lines.length > 0 && (
+              <table className="mono lm-editor__lines">
+                <thead>
+                  <tr>
+                    <th title={UI_HELP.lmLineName}>line</th>
+                    <th title={UI_HELP.lmLineWeight}>weight</th>
+                    <th title={UI_HELP.lmClosed}>closed</th>
+                    <th title="Vertices">pts</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line) => (
+                    <tr
+                      key={line.id}
+                      aria-selected={line.id === selectedLine}
+                      onClick={() => selectLine(line.id, line.id === selectedLine ? selectedVertex : null)}
+                      title={`${lineHint(line.name)}\n\n(${line.source}${line.edited ? ', edited' : ''})`}
+                    >
+                      <td>
+                        <span className={`lm-swatch lm-line-swatch${line.source === 'manual' || line.edited ? '' : ' lm-line-swatch--detected'}`} />
+                        <input
+                          type="text"
+                          value={line.name}
+                          aria-label="Line name"
+                          onChange={(event) => updateLine(line.id, { name: event.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min={0}
+                          max={WEIGHT_MAX}
+                          step="any"
+                          value={line.weight}
+                          aria-label="Line weight"
+                          onChange={(event) =>
+                            updateLine(line.id, { weight: clampWeight(Number(event.target.value)) })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={line.closed}
+                          aria-label="Closed"
+                          onChange={(event) => updateLine(line.id, { closed: event.target.checked })}
+                        />
+                      </td>
+                      <td className={lineIsValid(line) ? undefined : 'muted'}>{line.xy.length}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn--small"
+                          title="Delete this line"
+                          aria-label={`Delete ${line.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            removeLine(line.id)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -662,10 +939,13 @@ export function LandmarkEditor({
       <div className="note">
         {placing
           ? `Click the canvas to place ${placing.name}: ${placementHint(placing.name)}`
-          : mode === 'box'
+          : chosenLine
+            ? `${chosenLine.name}: double-click to add a vertex on its nearest edge${chosenLine.xy.length < 2 ? ' (the first ones are appended)' : ''}, drag a square to move it, arrow keys nudge the selected one, Delete removes it (with no square selected, the whole line). Esc deselects.${lineIsValid(chosenLine) ? '' : ` Needs ${chosenLine.closed ? 3 : 2} vertices before the run uses it.`}`
+            : mode === 'box'
             ? 'Drag a box around the face; detection runs inside it.'
             : 'Wheel to zoom, drag to pan, double-click to add, drag a dot to move it, arrow keys nudge the selected one (Shift for 5 px), Delete removes it.'}
       </div>
+      {chosenLine && <div className="note">{lineHint(chosenLine.name)}</div>}
       {chosen && !placing && (
         <div className="note">
           <strong>{chosen.name}</strong>: {placementHint(chosen.name)}
@@ -718,5 +998,29 @@ function describeView(result: LandmarkExtract): string {
 
 function droppedNote(result: LandmarkExtract): string {
   const dropped = result.dropped ?? []
-  return dropped.length ? ` Hidden side left out: ${dropped.join(', ')}.` : ''
+  if (!dropped.length) return ''
+  // The dense sets drop dozens of mesh points: name the named ones, count the rest.
+  const named = dropped.filter((name) => !/^m\d+$/.test(name))
+  const mesh = dropped.length - named.length
+  const list = [...named, ...(mesh ? [`${mesh} mesh points`] : [])]
+  return ` Hidden side left out: ${list.join(', ')}.`
+}
+
+function poseNote(result: LandmarkExtract): string {
+  const text = describePose(result.pose)
+  const model = result.landmarks.filter((point) => point.source === 'model').length
+  return `${text ? ` Head: ${text}.` : ''}${model ? ` ${model} points placed by the fitted head.` : ''}`
+}
+
+function setNote(result: LandmarkExtract, asked: string): string {
+  return asked !== 'sparse' && result.landmark_set === 'sparse'
+    ? ` The ${asked} set needs the face mesh, which found nothing here: these are the side-view points.`
+    : ''
+}
+
+function hairlineNote(result: LandmarkExtract, asked: boolean): string {
+  if (!asked) return ''
+  return (result.polylines ?? []).some((line) => line.name === 'hairline')
+    ? ''
+    : ' No hairline found (it needs a frontal or turned face and hair that differs from the skin).'
 }

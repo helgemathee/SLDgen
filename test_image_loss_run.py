@@ -243,6 +243,34 @@ def test_wrong_size_target_refused_early():
     return passed
 
 
+def test_polyline_landmarks_run():
+    """Spec 7 addendum SS6: a landmark file of polylines alone drives the landmark term."""
+    import json
+
+    path = Path("/tmp/claude-1000/-home-helge-SLDgen/imgloss_polyline_landmarks.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c = RENDER_SIZE / 2
+    path.write_text(json.dumps({
+        "space": "canvas",
+        "image_size": [RENDER_SIZE, RENDER_SIZE],
+        "preset": "edited",
+        "landmarks": [],
+        "polylines": [{"name": "rim", "closed": True, "weight": 3.0,
+                       "xy": [[c - 20, c - 12], [c + 20, c - 12], [c + 20, c + 12], [c - 20, c + 12]]}],
+    }))
+    args = fresh("imgloss_polyline", FLAGS + ["--image-loss-landmark", "1",
+                                              "--image-loss-landmarks", str(path)])
+    quiet_run(args)
+    rows = read_log(args)
+    passed = (
+        len(rows) == HORIZON + 1
+        and all(r["landmark"] and float(r["landmark"]) >= 0 for r in rows)
+        and (Path(args.output_dir) / "final_sld.svg").exists()
+    )
+    print(f"[polyline landmarks] run reads a polyline-only file, term logged : {'PASS' if passed else 'FAIL'}")
+    return passed
+
+
 def main():
     install_stubs()
     ok = True
@@ -251,6 +279,7 @@ def main():
         test_image_loss_run,
         test_image_loss_changes_trajectory,
         test_pyramid_run,
+        test_polyline_landmarks_run,
         test_segmented_equals_uninterrupted,
         test_resume_refuses_changed_weight,
         test_wrong_size_target_refused_early,

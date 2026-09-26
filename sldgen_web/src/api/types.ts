@@ -247,6 +247,22 @@ export interface LandmarkExtract {
     facing: 'left' | 'right' | null
   } | null
   dropped?: string[]
+  /** What was built (Spec 7 addendum): the Pose fallback is always sparse. */
+  landmark_set?: string
+  pose?: {
+    yaw: number
+    pitch: number | null
+    roll: number | null
+    method: 'rigid-fit' | 'pose'
+    residual_px?: number
+  } | null
+  polylines?: {
+    name: string
+    closed: boolean
+    weight: number
+    source?: string
+    xy: [number, number][]
+  }[]
 }
 
 /** The canvas of the latest run of an image, for the landmark editor (Spec 7 SS5). */

@@ -201,7 +201,19 @@ export const UI_HELP = {
   lmTemplate:
     'Add named rows for a side-view face (nose tip, lips, chin, …). Select a row, then click the canvas to place it.',
   lmUpload: 'Load a landmark JSON made at this render size (for example by sld_landmarks.py).',
-  lmClear: 'Remove every landmark.',
+  lmClear: 'Remove every landmark and line.',
+  lmSet:
+    'Which points detection writes. Denser sets hold the head’s angle and proportions harder; the line is pulled with the same overall strength (weights are shared out so eyes, nose and mouth keep their emphasis).',
+  lmHairline:
+    'Also trace where the hair meets the forehead, as a line. Works on frontal and turned faces with hair that differs from the skin; check it.',
+  lmGlasses:
+    'Add three lines for glasses: a rim around each eye and the bridge. Drag their squares onto the frames. No detector finds glasses; frames are strong likeness anchors.',
+  lmLine:
+    'Add an empty line of your own, then double-click to add its vertices. The line is pulled along its whole length.',
+  lmLineName: 'A label for you; the run only uses the vertices and the weight.',
+  lmLineWeight:
+    'The whole line’s pull: a line of weight 3 pulls as much in total as one landmark of weight 3, shared along its length.',
+  lmClosed: 'Closed lines (a lens rim) join the last vertex back to the first.',
   lmShowEdges: 'Show the edge map under the points, to place them on real edges.',
   lmName: 'A label for you; the run only uses position and weight.',
   lmWeight:
