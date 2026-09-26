@@ -256,6 +256,19 @@ a {
   color: var(--paper);
 }
 
+/* The favourites chip. Pressed it keeps the ink ground like every other chip,
+ * and the star stays yellow on it so it reads as "favourites" either way. */
+.chip--star {
+  color: var(--star);
+  font-size: var(--t-sm);
+  line-height: 1;
+  padding: 1px 7px;
+}
+
+.chip--star[aria-pressed='true'] {
+  color: var(--star);
+}
+
 .chip__dot {
   width: 6px;
   height: 6px;
@@ -271,7 +284,7 @@ a {
 
 .row {
   display: grid;
-  grid-template-columns: auto 44px 1fr auto;
+  grid-template-columns: auto 44px 1fr auto auto;
   align-items: center;
   gap: var(--gap-sm);
   padding: 6px var(--gap-sm);
@@ -335,6 +348,44 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   letter-spacing: -0.02em;
+}
+
+/* The job star (StarToggle). Unset stars appear only on hover or focus, so the
+ * yellow ones are the only stars you see when scanning. */
+.star-toggle {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--star);
+}
+
+.star-toggle--off {
+  color: var(--graphite);
+  opacity: 0;
+}
+
+.row:hover .star-toggle--off,
+.cell:hover .star-toggle--off,
+.star-toggle--off:focus-visible {
+  opacity: 1;
+}
+
+/* No hover on a touch screen, so the outline has to be there to tap. */
+@media (hover: none) {
+  .star-toggle--off {
+    opacity: 0.5;
+  }
+}
+
+.star-toggle:hover {
+  color: var(--star);
+}
+
+.btn--star-on {
+  border-color: var(--star);
 }
 
 .row__check {

@@ -8,8 +8,9 @@
  * competes with the work; a status colour that appears nowhere else is legible
  * from across the room. Primary actions get weight and position, not hue.
  *
- * The single deliberate exception is the partition preview (SS12), where the
- * colours *are* the partition identity and are therefore functional. */
+ * The deliberate exceptions are the partition preview (SS12), where the
+ * colours *are* the partition identity and are therefore functional, and the
+ * job star (--star below). */
 
 :root {
   --paper: #fbfaf7;
@@ -35,6 +36,11 @@
   --st-complete: #15803d;
   --st-failed: #b91c1c;
   --st-deleting: var(--graphite);
+
+  /* The second deliberate exception: the job star. It is a judgement the user
+   * filters a long list by, and it has to be findable at a glance among dozens
+   * of seeds -- so, by request, it is yellow. Nothing else may use it. */
+  --star: #e0a800;
 
   --font-ui: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;

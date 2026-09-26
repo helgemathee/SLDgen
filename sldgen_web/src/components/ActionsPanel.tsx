@@ -25,7 +25,7 @@ export function ActionsPanel({
   onRunAgain: () => void
   onChanged: () => void
 }) {
-  const { toast, jobs } = useApp()
+  const { toast, jobs, jobsById, toggleStar } = useApp()
   const [promoteTo, setPromoteTo] = useState(job.num_iter)
   const [title, setTitle] = useState(job.title ?? '')
   const [withCheckpoints, setWithCheckpoints] = useState(false)
@@ -84,6 +84,9 @@ export function ActionsPanel({
       throw new Error('The segment did not stop within two minutes.')
     })
 
+  // From the live list rather than `job`, so the button flips the moment it is
+  // clicked -- the detail is only refetched when the job changes state.
+  const starred = jobsById.get(job.id)?.starred ?? job.starred
   const running = job.state === 'running'
   const waiting = job.state === 'waiting'
   const resumable = job.state === 'paused' && job.current_epoch < job.target_epoch
@@ -185,6 +188,18 @@ export function ActionsPanel({
             )}
           </div>
         )}
+
+        <div className="btn-row">
+          <button
+            type="button"
+            className={`btn${starred ? ' btn--star-on' : ''}`}
+            aria-pressed={starred}
+            onClick={() => toggleStar(job.id)}
+          >
+            {starred ? '★ Unmark favourite' : '☆ Mark as favourite'}
+          </button>
+          <span className="note">Filter the rail to favourites with its ★ chip.</span>
+        </div>
 
         <div className="btn-row">
           <button type="button" className="btn" onClick={onRunAgain}>

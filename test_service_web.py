@@ -286,6 +286,7 @@ def test_marks(harness, sha256):
     job_id = job["id"]
     check("marks/a-new-job-is-not-parked", job["viewed_epoch"] is None)
     check("marks/a-new-job-has-no-stars", job["favorite_count"] == 0)
+    check("marks/a-new-job-is-not-starred", job["starred"] is False)
 
     # Before anything has run there is still a picture: the submitted image.
     # A queue of white squares says nothing about what is in the queue.
@@ -359,8 +360,24 @@ def test_marks(harness, sha256):
     check("marks/unstarring-twice-is-not-an-error",
           harness.client.delete(f"/api/jobs/{job_id}/favorites/{other}").status_code == 200)
 
+    # -- the job's own star ------------------------------------------------
+    starred_job = harness.client.put(f"/api/jobs/{job_id}/star")
+    check("marks/job-star-accepted", starred_job.status_code == 200, starred_job.text[:120])
+    check("marks/job-star-twice-is-once",
+          harness.client.put(f"/api/jobs/{job_id}/star").json()["starred"] is True)
+    check("marks/job-star-in-the-summary",
+          [j["starred"] for j in harness.client.get("/api/jobs").json()["jobs"]
+           if j["id"] == job_id] == [True])
+    harness.client.delete(f"/api/jobs/{job_id}/star")
+    check("marks/job-unstar-clears-it", harness.job(job_id)["starred"] is False)
+    check("marks/job-unstar-twice-is-not-an-error",
+          harness.client.delete(f"/api/jobs/{job_id}/star").status_code == 200)
+    check("marks/cannot-star-a-missing-job",
+          harness.client.put("/api/jobs/nope/star").status_code == 404)
+
     # -- marks belong to the job -------------------------------------------
     harness.client.put(f"/api/jobs/{job_id}/viewed-epoch", json={"epoch": parked})
+    harness.client.put(f"/api/jobs/{job_id}/star")
     harness.client.delete(f"/api/jobs/{job_id}")
     wait_for(lambda: harness.client.get(f"/api/jobs/{job_id}").status_code == 404,
              timeout=30, what="the job to be deleted")
@@ -368,8 +385,9 @@ def test_marks(harness, sha256):
     try:
         left = connection.execute(
             "SELECT (SELECT COUNT(*) FROM job_views WHERE job_id = ?)"
-            "     + (SELECT COUNT(*) FROM job_favorites WHERE job_id = ?)",
-            (job_id, job_id),
+            "     + (SELECT COUNT(*) FROM job_favorites WHERE job_id = ?)"
+            "     + (SELECT COUNT(*) FROM job_stars WHERE job_id = ?)",
+            (job_id, job_id, job_id),
         ).fetchone()[0]
     finally:
         connection.close()

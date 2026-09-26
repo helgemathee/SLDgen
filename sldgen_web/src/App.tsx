@@ -11,7 +11,7 @@ import { useApp } from './state/store'
 
 export function App() {
   const route = useRoute()
-  const { jobs, stateFilter, message } = useApp()
+  const { jobs, stateFilter, starredOnly, message } = useApp()
   const [helpOpen, setHelpOpen] = useState(false)
   const [focusedId, setFocusedId] = useState<string | null>(null)
 
@@ -19,8 +19,8 @@ export function App() {
 
   // The rail's own ordering, so j/k walk what is actually on screen.
   const ordered = useMemo(
-    () => filterJobs(jobs, { states: stateFilter, text: '', sort: 'newest' }),
-    [jobs, stateFilter],
+    () => filterJobs(jobs, { states: stateFilter, starredOnly, text: '', sort: 'newest' }),
+    [jobs, stateFilter, starredOnly],
   )
 
   useEffect(() => {

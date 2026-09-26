@@ -54,7 +54,8 @@ _JOB_SELECT = """
 SELECT jobs.*,
        job_views.epoch AS viewed_epoch,
        (SELECT COUNT(*) FROM job_favorites WHERE job_favorites.job_id = jobs.id)
-         AS favorite_count
+         AS favorite_count,
+       EXISTS (SELECT 1 FROM job_stars WHERE job_stars.job_id = jobs.id) AS starred
   FROM jobs LEFT JOIN job_views ON job_views.job_id = jobs.id
 """
 
@@ -461,6 +462,19 @@ class Store:
                 "DELETE FROM job_favorites WHERE job_id = ? AND epoch = ?", (job_id, int(epoch))
             )
         return self.list_favorites(job_id)
+
+    def set_starred(self, job_id, starred):
+        """Star or unstar the job itself. Idempotent both ways."""
+        self.require_job(job_id)
+        with self.transaction() as connection:
+            if starred:
+                connection.execute(
+                    "INSERT OR IGNORE INTO job_stars(job_id, created_at) VALUES (?, ?)",
+                    (job_id, db.utcnow()),
+                )
+            else:
+                connection.execute("DELETE FROM job_stars WHERE job_id = ?", (job_id,))
+        return bool(starred)
 
     # -- inputs -----------------------------------------------------------
 

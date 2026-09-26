@@ -115,6 +115,7 @@ function jobDetail(overrides: Partial<JobDetail> = {}): JobDetail {
     preview_url: '/api/jobs/01JOB/preview',
     viewed_epoch: null,
     favorite_count: 0,
+    starred: false,
     favorite_epochs: [],
     params: { ...defaultParams(), seed: 1041 },
     structural_params: {},

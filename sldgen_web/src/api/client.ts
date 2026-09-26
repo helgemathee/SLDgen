@@ -100,6 +100,11 @@ export const api = {
   removeFavorite: (id: string, epoch: number) =>
     request<FavoritesResponse>(`/api/jobs/${id}/favorites/${epoch}`, { method: 'DELETE' }),
 
+  setStarred: (id: string, starred: boolean) =>
+    request<{ job_id: string; starred: boolean }>(`/api/jobs/${id}/star`, {
+      method: starred ? 'PUT' : 'DELETE',
+    }),
+
   lineage: (id: string) => request<Lineage>(`/api/jobs/${id}/lineage`),
   command: (id: string) => request<string>(`/api/jobs/${id}/command`),
 

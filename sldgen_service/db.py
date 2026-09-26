@@ -10,7 +10,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -127,6 +127,14 @@ CREATE TABLE IF NOT EXISTS job_favorites (
   epoch      INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (job_id, epoch)
+);
+
+-- A star on the job as a whole, as opposed to one of its frames: "this seed is
+-- one of the good ones". A row rather than a column on `jobs` so that an older
+-- database is upgraded by opening it, like every schema change so far.
+CREATE TABLE IF NOT EXISTS job_stars (
+  job_id     TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL
 );
 """
 

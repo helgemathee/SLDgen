@@ -7,6 +7,7 @@ import { useApp } from '../state/store'
 import { JobThumb } from './JobThumb'
 import { SelectionActions } from './SelectionActions'
 import { Ring } from './Ring'
+import { StarToggle } from './StarToggle'
 
 export type RailSort = 'newest' | 'longest'
 
@@ -20,10 +21,16 @@ function rowMeta(job: JobSummary): string {
 
 export function filterJobs(
   jobs: JobSummary[],
-  { states, text, sort }: { states: Set<JobState>; text: string; sort: RailSort },
+  {
+    states,
+    starredOnly = false,
+    text,
+    sort,
+  }: { states: Set<JobState>; starredOnly?: boolean; text: string; sort: RailSort },
 ): JobSummary[] {
   const needle = text.trim().toLowerCase()
   const filtered = jobs.filter((job) => {
+    if (starredOnly && !job.starred) return false
     if (states.size > 0 && !states.has(job.state)) return false
     if (!needle) return true
     return (
@@ -52,13 +59,17 @@ export function JobRail({
   selectedId: string | null
   focusedId: string | null
 }) {
-  const { jobs, selection, toggleSelected, stateFilter, setStateFilter } = useApp()
+  const { jobs, selection, toggleSelected, stateFilter, setStateFilter, starredOnly, setStarredOnly } =
+    useApp()
   const states = stateFilter
   const setStates = setStateFilter
   const [text, setText] = useState('')
   const [sort, setSort] = useState<RailSort>('newest')
 
-  const visible = useMemo(() => filterJobs(jobs, { states, text, sort }), [jobs, states, text, sort])
+  const visible = useMemo(
+    () => filterJobs(jobs, { states, starredOnly, text, sort }),
+    [jobs, states, starredOnly, text, sort],
+  )
 
   const toggleState = (state: JobState) => {
     const next = new Set(states)
@@ -78,6 +89,16 @@ export function JobRail({
           onChange={(event) => setText(event.target.value)}
         />
         <div className="chips">
+          <button
+            type="button"
+            className="chip chip--star"
+            aria-pressed={starredOnly}
+            aria-label="Only favourites"
+            title="Only favourites"
+            onClick={() => setStarredOnly(!starredOnly)}
+          >
+            ★
+          </button>
           {JOB_STATES.filter((state) => state !== 'deleting').map((state) => (
             <button
               key={state}
@@ -188,6 +209,7 @@ function RailRow({
             : ''}
         </span>
       </span>
+      <StarToggle job={job} />
       <Ring
         size={20}
         state={job.state}

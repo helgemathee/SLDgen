@@ -141,6 +141,8 @@ def create_app(config=None):
             # the viewed frame, and its cache key has to change when that does.
             "viewed_epoch": job["viewed_epoch"],
             "favorite_count": job["favorite_count"],
+            # The job itself starred ("a good seed"), as opposed to its frames.
+            "starred": bool(job["starred"]),
         }
 
     def job_detail(job):
@@ -668,6 +670,16 @@ def create_app(config=None):
             if epoch < 0:
                 raise HTTPException(400, "epoch must not be negative")
         return {"job_id": job_id, "viewed_epoch": store.set_viewed_epoch(job_id, epoch)}
+
+    @app.put("/api/jobs/{job_id}/star")
+    def put_star(job_id: str):
+        require_job(job_id)
+        return {"job_id": job_id, "starred": store.set_starred(job_id, True)}
+
+    @app.delete("/api/jobs/{job_id}/star")
+    def delete_star(job_id: str):
+        require_job(job_id)
+        return {"job_id": job_id, "starred": store.set_starred(job_id, False)}
 
     @app.get("/api/jobs/{job_id}/favorites")
     def get_favorites(job_id: str):

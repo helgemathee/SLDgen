@@ -38,6 +38,7 @@ function job(overrides: Partial<JobSummary> = {}): JobSummary {
     preview_url: '/api/jobs/01JOB000000000000000000001/preview',
     viewed_epoch: null,
     favorite_count: 0,
+    starred: false,
     ...overrides,
   }
 }

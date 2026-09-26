@@ -51,6 +51,8 @@ export interface JobSummary {
   /** The frame the job is parked on, or null while it follows the newest one. */
   viewed_epoch: number | null
   favorite_count: number
+  /** The job itself is starred -- "one of the good seeds" -- not a frame. */
+  starred: boolean
   /** Only present when the list was fetched with `with_params`. */
   params?: Params
 }

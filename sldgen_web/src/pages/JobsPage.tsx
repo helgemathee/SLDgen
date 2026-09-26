@@ -1,6 +1,7 @@
 import { JobThumb } from '../components/JobThumb'
 import { Ring } from '../components/Ring'
 import { SelectionActions } from '../components/SelectionActions'
+import { StarToggle } from '../components/StarToggle'
 import { formatAgo, jobLabel } from '../lib/format'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
@@ -59,6 +60,7 @@ export function JobsPage() {
                 aria-label={`Select ${jobLabel(job)}`}
                 onChange={() => toggleSelected(job.id, true)}
               />
+              <StarToggle job={job} />
               <Ring
                 size={18}
                 state={job.state}

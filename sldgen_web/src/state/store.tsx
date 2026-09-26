@@ -22,6 +22,11 @@ interface AppState {
    *  clicking the queue depth filters the rail to `queued` (Spec 3 SS10). */
   stateFilter: Set<JobState>
   setStateFilter: (states: Set<JobState>) => void
+  /** The rail's ★ chip: show only starred jobs. Combines with the states. */
+  starredOnly: boolean
+  setStarredOnly: (value: boolean) => void
+  /** Star or unstar a job, optimistically, from wherever it is drawn. */
+  toggleStar: (id: string) => void
   /** Total bytes under the work root, and the growth since this session opened. */
   disk: DiskReport | null
   diskDelta: number
@@ -50,6 +55,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [disk, setDisk] = useState<DiskReport | null>(null)
   const [selection, setSelection] = useState<string[]>([])
   const [stateFilter, setStateFilter] = useState<Set<JobState>>(() => new Set())
+  const [starredOnly, setStarredOnly] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   // Captured once, so the status bar can show growth without arithmetic (SS10).
   const baselineDisk = useRef<number | null>(null)
@@ -135,6 +141,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = setTimeout(() => setMessage(null), 4000)
   }, [])
 
+  // Optimistic, because the star is clicked in lists and the stream would take
+  // up to a second to echo it. The next stream event carries the server's
+  // answer either way; a failure only has to put the old value back.
+  const jobsRef = useRef(jobs)
+  jobsRef.current = jobs
+  const toggleStar = useCallback(
+    (id: string) => {
+      const job = jobsRef.current.find((candidate) => candidate.id === id)
+      if (!job) return
+      const next = !job.starred
+      const apply = (value: boolean) =>
+        setJobs((current) =>
+          current.map((candidate) =>
+            candidate.id === id ? { ...candidate, starred: value } : candidate,
+          ),
+        )
+      apply(next)
+      api.setStarred(id, next).catch((error) => {
+        apply(!next)
+        toast(error instanceof Error ? error.message : 'Could not change the star.')
+      })
+    },
+    [toast],
+  )
+
   const toggleSelected = useCallback((id: string, additive: boolean) => {
     setSelection((current) => {
       if (!additive) return current.length === 1 && current[0] === id ? [] : [id]
@@ -162,6 +193,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       queueDepth,
       stateFilter,
       setStateFilter,
+      starredOnly,
+      setStarredOnly,
+      toggleStar,
       disk,
       diskDelta:
         disk && baselineDisk.current !== null ? disk.total_bytes - baselineDisk.current : 0,
@@ -179,6 +213,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       connection,
       queueDepth,
       stateFilter,
+      starredOnly,
+      toggleStar,
       disk,
       selection,
       toggleSelected,
