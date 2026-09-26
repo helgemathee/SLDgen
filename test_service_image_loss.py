@@ -332,6 +332,16 @@ def test_landmarks(config, source_job_id, target_digest):
         "/api/image-loss/landmarks", json={"source_job_id": source_job_id, "box": [50, 50, 10, 90]}
     )
     check("landmarks/inverted-box-400", inverted.status_code == 400, inverted.text[:120])
+    for label, extra in (
+        ("unknown-set", {"landmark_set": "huge"}),
+        ("all-with-set", {"preset": "all", "landmark_set": "dense"}),
+        ("hairline-not-bool", {"include_hairline": "yes"}),
+        ("pose-report-not-bool", {"pose_report": 1}),
+    ):
+        refused = client.post(
+            "/api/image-loss/landmarks", json={"source_job_id": source_job_id, **extra}
+        )
+        check(f"landmarks/{label}-400", refused.status_code == 400, refused.text[:120])
 
     canvas = client.get("/api/image-loss/canvas", params={"target_sha256": target_digest})
     body = canvas.json() if canvas.status_code == 200 else {}
@@ -384,6 +394,51 @@ def test_landmarks(config, source_job_id, target_digest):
         boxed.status_code == 200 and "--box" in boxed.json()["argv"],
         boxed.text[:160],
     )
+    check(
+        "landmarks/sparse-default-keys",
+        body.get("landmark_set") == "sparse" and body.get("pose") is None and body.get("polylines") == []
+        and "--landmark-set" not in body["argv"],
+    )
+    for name in ("standard", "dense", "pose-locked"):
+        built = client.post(
+            "/api/image-loss/landmarks",
+            json={"target_sha256": face_sha, "landmark_set": name, "pose_report": True,
+                  "include_hairline": True},
+        )
+        data = built.json() if built.status_code == 200 else {}
+        argv = data.get("argv", [])
+        check(
+            f"landmarks/{name}-set",
+            built.status_code == 200 and data.get("landmark_set") == name
+            and data["count"] > body["count"] and "--landmark-set" in argv
+            and "--pose-report" in argv and "--include-hairline" in argv,
+            built.text[:200] if built.status_code != 200 else f"{data.get('count')} points",
+        )
+        pose = data.get("pose") or {}
+        check(
+            f"landmarks/{name}-pose-report",
+            pose.get("method") == "rigid-fit" and abs(pose.get("yaw", 99)) < 20
+            and isinstance(data.get("polylines"), list),
+            str(pose),
+        )
+
+    # Spec 7 addendum SS2: the sparse set is byte for byte the pre-addendum
+    # --preset portrait file (fixture made by that script on the same image).
+    script = REPO_ROOT / "sld_landmarks.py"
+    fixture = REPO_ROOT / "test_support" / "landmarks_portrait_firefighter.json"
+    out = config.tmp_dir / "sparse-regression.json"
+    for flags in ([], ["--landmark-set", "sparse"]):
+        subprocess.run(
+            [str(config.sldgen_python), str(script), "--image", str(REPO_ROOT / "data" / "firefighter.png"),
+             "--out", str(out), *flags],
+            capture_output=True, check=False,
+        )
+        check(
+            f"landmarks/sparse-byte-identical {' '.join(flags) or '(default)'}",
+            out.exists() and out.read_bytes() == fixture.read_bytes(),
+        )
+        out.unlink(missing_ok=True)
+
     stored = client.get(f"/api/uploads/{body['sha256']}")
     payload = stored.json() if stored.status_code == 200 else {}
     check("landmarks/sha256-is-a-canvas-json-upload", payload.get("space") == "canvas")

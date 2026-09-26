@@ -155,7 +155,29 @@ def parse_box(box):
     return values
 
 
-def run_landmarks(config, source_job_id, preset="portrait", box=None, timeout=120):
+#: ``sld_landmarks.py --landmark-set`` values (Spec 7 addendum SS2).
+LANDMARK_SETS = ("sparse", "standard", "dense", "pose-locked")
+
+
+def parse_flag(value, name):
+    """A JSON boolean (absent -> False). Anything else is a bad request."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ImageLossError(f"{name} must be true or false")
+    return value
+
+
+def run_landmarks(
+    config,
+    source_job_id,
+    preset="portrait",
+    box=None,
+    timeout=120,
+    landmark_set="sparse",
+    include_hairline=False,
+    pose_report=False,
+):
     """Extract landmarks from a run's canvas, store them as an upload, describe them.
 
     The run's ``mask.png`` goes along when it exists: it is what lets the
@@ -163,6 +185,12 @@ def run_landmarks(config, source_job_id, preset="portrait", box=None, timeout=12
     """
     if preset not in ("portrait", "all"):
         raise ImageLossError("preset must be 'portrait' or 'all'")
+    if landmark_set not in LANDMARK_SETS:
+        raise ImageLossError(f"landmark_set must be one of {', '.join(LANDMARK_SETS)}")
+    if preset == "all" and landmark_set != "sparse":
+        raise ImageLossError("preset 'all' cannot be combined with a landmark_set")
+    include_hairline = parse_flag(include_hairline, "include_hairline")
+    pose_report = parse_flag(pose_report, "pose_report")
     box = parse_box(box)
     image, mask = source_images(config, source_job_id)
     out_path = landmarks_path(config, source_job_id)
@@ -181,6 +209,12 @@ def run_landmarks(config, source_job_id, preset="portrait", box=None, timeout=12
     ]
     if mask is not None:
         argv += ["--mask", str(mask)]
+    if landmark_set != "sparse":
+        argv += ["--landmark-set", landmark_set]
+    if include_hairline:
+        argv.append("--include-hairline")
+    if pose_report:
+        argv.append("--pose-report")
     if box is not None:
         argv += ["--box"] + [str(value) for value in box]
     completed = subprocess.run(  # noqa: S603 - argv is built here, not by a caller
@@ -204,6 +238,9 @@ def run_landmarks(config, source_job_id, preset="portrait", box=None, timeout=12
         "image_size": data["image_size"],
         "view": data.get("view"),
         "dropped": data.get("dropped", []),
+        "landmark_set": data.get("landmark_set", "sparse"),
+        "pose": data.get("pose"),
+        "polylines": data.get("polylines", []),
         "argv": argv,
     }
 

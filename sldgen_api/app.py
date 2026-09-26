@@ -1067,6 +1067,9 @@ def create_app(config=None):
                 source_job_id,
                 str(body.get("preset") or "portrait"),
                 box=body.get("box"),
+                landmark_set=str(body.get("landmark_set") or "sparse"),
+                include_hairline=body.get("include_hairline"),
+                pose_report=body.get("pose_report"),
             )
         except image_loss_utils.LandmarkError as exc:
             raise HTTPException(422, str(exc)) from exc
