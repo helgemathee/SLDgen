@@ -339,3 +339,50 @@ export function placementHint(name: string): string {
     : ''
   return `${hint}${which} ${HOW}`
 }
+
+// -- references (open in a new tab) -------------------------------------------------
+
+export interface Reference {
+  label: string
+  url: string
+}
+
+const REF = {
+  faceMesh: {
+    label: 'MediaPipe Face Landmarker',
+    url: 'https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker',
+  },
+  meshMap: {
+    label: 'Face mesh point map',
+    url: 'https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/modules/face_geometry/data/canonical_face_model_uv_visualization.png',
+  },
+  pose: {
+    label: 'MediaPipe Pose Landmarker',
+    url: 'https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker',
+  },
+  profile: {
+    label: 'Soft-tissue profile landmarks',
+    url: 'https://en.wikipedia.org/wiki/Cephalometric_analysis',
+  },
+  nasion: { label: 'Nasion', url: 'https://en.wikipedia.org/wiki/Nasion' },
+  canthus: { label: 'Canthus (eye corners)', url: 'https://en.wikipedia.org/wiki/Canthus' },
+  ear: { label: 'Helix (ear rim)', url: 'https://en.wikipedia.org/wiki/Helix_(ear)' },
+} satisfies Record<string, Reference>
+
+/** The general references shown under the editor. */
+export const REFERENCES: Reference[] = [REF.faceMesh, REF.meshMap, REF.pose, REF.profile]
+
+const PROFILE_PARTS = new Set([
+  'brow_ridge', 'nose_tip', 'subnasale', 'upper_lip', 'stomion', 'lower_lip', 'chin_front', 'jaw_angle',
+])
+
+/** The most useful page about one landmark, or null for the user's own points. */
+export function referenceFor(name: string): Reference | null {
+  const part = name.replace(/^(left|right)_/, '').replace(/_(left|right)$/, '')
+  if (part === 'nasion') return REF.nasion
+  if (part === 'ear') return REF.ear
+  if (part === 'eye' || part === 'eye_outer' || part === 'eye_inner') return REF.canthus
+  if (PROFILE_PARTS.has(part)) return REF.profile
+  if (part in PLACEMENT_HINT) return REF.meshMap
+  return null
+}

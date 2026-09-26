@@ -17,6 +17,8 @@ import {
   parseFile,
   placedCount,
   placementHint,
+  REFERENCES,
+  referenceFor,
   serialize,
   withTemplate,
   zoomAbout,
@@ -364,6 +366,7 @@ export function LandmarkEditor({
   const zoom = view ? zoomLevel(view, imageSize) : 1
   const scale = view ? view.w / imageSize[0] : 1 // canvas px per fit px: dots keep their screen size
   const placing = points.find((point) => point.id === selected && point.xy === null)
+  const chosen = points.find((point) => point.id === selected) ?? null
   const usable = placedCount(points)
 
   return (
@@ -663,8 +666,32 @@ export function LandmarkEditor({
             ? 'Drag a box around the face; detection runs inside it.'
             : 'Wheel to zoom, drag to pan, double-click to add, drag a dot to move it, arrow keys nudge the selected one (Shift for 5 px), Delete removes it.'}
       </div>
+      {chosen && !placing && (
+        <div className="note">
+          <strong>{chosen.name}</strong>: {placementHint(chosen.name)}
+          {referenceFor(chosen.name) && (
+            <>
+              {' '}
+              <a href={referenceFor(chosen.name)!.url} target="_blank" rel="noopener noreferrer">
+                {referenceFor(chosen.name)!.label} ↗
+              </a>
+            </>
+          )}
+        </div>
+      )}
       {status && <div className="note mono">{status}</div>}
       {problem && <div className="warn">{problem}</div>}
+      <div className="note lm-editor__refs">
+        Reference:{' '}
+        {REFERENCES.map((reference, index) => (
+          <span key={reference.url}>
+            {index > 0 && ' · '}
+            <a href={reference.url} target="_blank" rel="noopener noreferrer">
+              {reference.label} ↗
+            </a>
+          </span>
+        ))}
+      </div>
       {usable > 0 && termWeight <= 0 && (
         <div className="warn">
           The landmark term is 0, so these {usable} points do nothing.{' '}

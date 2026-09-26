@@ -11,6 +11,7 @@ import {
   parseFile,
   placedCount,
   placementHint,
+  referenceFor,
   serialize,
   withTemplate,
   zoomAbout,
@@ -173,5 +174,17 @@ describe('placement hints', () => {
 
   it('falls back for the user’s own points', () => {
     expect(placementHint('p3')).toMatch(/^Your own point/)
+  })
+})
+
+describe('references', () => {
+  it('links every template name somewhere, and not the user’s own points', () => {
+    for (const entry of PROFILE_TEMPLATE) expect(referenceFor(entry.name)?.url).toMatch(/^https:\/\//)
+    expect(referenceFor('p2')).toBeNull()
+  })
+
+  it('sends eye corners to the canthus page and detected points to the mesh map', () => {
+    expect(referenceFor('left_eye_outer')?.url).toMatch(/Canthus/)
+    expect(referenceFor('mouth_right')?.url).toMatch(/canonical_face_model/)
   })
 })
