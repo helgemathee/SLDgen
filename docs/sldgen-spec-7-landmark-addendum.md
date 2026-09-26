@@ -353,6 +353,12 @@ reproduce the pre-change `--preset portrait` output on all 12 face canvases in
   (Esc deselects). Otherwise the first click of a double-click would deselect
   the line and add a point instead of a vertex.
 
+* **Editor review fixes** (`ab60122`, from a read-through review, since
+  there was no browser): double-clicking a dot or square no longer stacks a
+  new point or vertex on it; shortcuts ignore the set `<select>`; the line
+  selection is re-validated after a merge; Delete moves to the neighbouring
+  vertex; an older upload finishing late cannot attach stale content.
+
 ### 10.3 Tests
 
 `test_landmarks_geom.py` 110/110 (69 new: sets, weight budgets, culling,
