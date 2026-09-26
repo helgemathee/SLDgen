@@ -16,6 +16,14 @@ Detection is view-aware (Spec 7 SS4):
 2. Face Mesh finds nothing (a true profile): MediaPipe Pose supplies the facing
    direction, the visible eye and mouth corner, and the silhouette the rest.
 
+Which points are written is ``--landmark-set`` (Spec 7 addendum): ``sparse``
+(the portrait preset, byte-identical to before), ``standard`` (~50), ``dense``
+(120 spread over the face) or ``pose-locked`` (dense, checked against a rigid
+fit of MediaPipe's canonical face in ``assets/mediapipe``). Weights are shared
+out so every region keeps its sparse share. ``--pose-report``,
+``--include-hairline`` and ``--include-glasses`` add a pose diagnostic and
+polylines.
+
 It takes canvas-space input only -- a run's ``input.png`` (and ``mask.png``).
 Pointing it at the original photograph produces landmarks in the wrong frame,
 silently. The run refuses a file whose ``image_size`` is not ``--render-size``,

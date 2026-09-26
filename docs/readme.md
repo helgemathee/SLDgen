@@ -11,6 +11,8 @@ interface to SLDgen. Written to be implemented in order.
 | [4 — Dual conditioning](sldgen-spec-4-dual-conditioning.md) | depth *and* canny in one run: `--condition-2`, `--condition-mode` | Specs 1–3 | 📝 design only, not started |
 | [5 — Canny attraction](sldgen-spec-5-canny-attraction.md) | `--attract-canny`: pull the curve onto the target's edges, with a preview in the UI | Specs 1–3 | ✅ implemented, not yet run on the GPU host |
 | [6 — Image fidelity loss](sldgen-spec-6-image-fidelity-loss.md) | `--image-loss`: a normalised gradient blend of SDS with a chamfer / pyramid / landmark term against the canvas image, end to end through service and UI | Specs 1–3, 5 | ✅ phases 1–5 implemented (2026-09-25), GPU-checked on 300-iteration runs; the §14 sweep is not yet run |
+| [7 — Landmark editor](sldgen-spec-7-landmark-editor.md) | view-aware face detection (turned faces, profiles via Pose + silhouette) and a landmark editor in the Image fidelity panel | Spec 6 | ✅ implemented and pushed (2026-09-26) |
+| [7 addendum — Landmark sets](sldgen-spec-7-landmark-addendum.md) | `--landmark-set sparse/standard/dense/pose-locked`, `--pose-report`, polyline landmarks (glasses, hairline), editor support | Spec 7 | ✅ implemented (2026-09-26); editor awaiting a browser check |
 
 Each completed spec ends with an **"As built"** section: what shipped, every
 place the implementation departed from the design and why, and what was
@@ -74,6 +76,7 @@ a stopped-then-resumed run produce a byte-identical `final_sld.svg`.
 | `test_service_partitions.py` | both | the real `sld_partition.py`, all six strategies, driven by the API |
 | `test_image_loss_geom.py` | conda `sldgen` | Spec 6: schedule, blend, edge target, chamfer/pyramid/landmark, validation, the real painter |
 | `test_image_loss_run.py` | conda `sldgen` | Spec 6: `run()` with `--image-loss`, diffusion stubbed: opt-in guarantee, segmented == uninterrupted |
+| `test_landmarks_geom.py` | conda `sldgen` | Spec 7 + addendum: yaw, culling, silhouette, landmark sets, weight budgets, rigid fit, hairline (no MediaPipe) |
 | `test_service_image_loss.py` | `.venv-service`, with `SLDGEN_CANNY_PYTHON` = the conda python | Spec 6: params, input roles, fake run, edge preview and landmark endpoints |
 
 None of them needs a GPU. The service tests boot real daemons against a
