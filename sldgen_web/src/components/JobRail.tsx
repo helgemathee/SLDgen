@@ -6,15 +6,26 @@ import { navigate } from '../router'
 import { useApp } from '../state/store'
 import { JobThumb } from './JobThumb'
 import { SelectionActions } from './SelectionActions'
-import { Ring } from './Ring'
+import { JobStatus } from './JobStatus'
 import { StarToggle } from './StarToggle'
+import { queueFirst, queueLabel, queuePositions } from '../lib/queue'
 
-export type RailSort = 'newest' | 'longest'
+export type RailSort = 'newest' | 'queue' | 'longest'
+
+const SORT_LABEL: Record<RailSort, string> = {
+  newest: 'newest',
+  queue: 'queue order',
+  longest: 'longest running',
+}
+const NEXT_SORT: Record<RailSort, RailSort> = { newest: 'queue', queue: 'longest', longest: 'newest' }
 
 /** One line of monospace data per row -- the rail is for scanning, not reading. */
-function rowMeta(job: JobSummary): string {
+function rowMeta(job: JobSummary, position?: number): string {
   if (job.state === 'failed') return job.error_class ?? 'failed'
-  if (job.state === 'queued') return `queued ${formatAgo(job.created_at)}`
+  if (job.state === 'queued') {
+    const where = queueLabel(position)
+    return `queued ${formatAgo(job.created_at)}${where ? ` · ${where}` : ''}`
+  }
   if (job.state === 'complete') return `${job.num_iter} done`
   return `${job.current_epoch}/${job.num_iter}`
 }
@@ -39,6 +50,7 @@ export function filterJobs(
       job.id.toLowerCase().includes(needle)
     )
   })
+  if (sort === 'queue') return queueFirst(filtered)
   if (sort === 'longest') {
     // "Longest running" means elapsed since the job first started, which is the
     // question being asked when you sort by it: what has been on the card
@@ -66,6 +78,8 @@ export function JobRail({
   const [text, setText] = useState('')
   const [sort, setSort] = useState<RailSort>('newest')
 
+  // Positions over the whole queue, not just the filtered rows.
+  const positions = useMemo(() => queuePositions(jobs), [jobs])
   const visible = useMemo(
     () => filterJobs(jobs, { states, starredOnly, text, sort }),
     [jobs, states, starredOnly, text, sort],
@@ -114,10 +128,10 @@ export function JobRail({
           <button
             type="button"
             className="chip"
-            onClick={() => setSort(sort === 'newest' ? 'longest' : 'newest')}
-            title="Sort order"
+            onClick={() => setSort(NEXT_SORT[sort])}
+            title="Sort order: newest first, the queue in the order the worker takes it, or longest running"
           >
-            {sort === 'newest' ? 'newest' : 'longest running'}
+            {SORT_LABEL[sort]}
           </button>
         </div>
         <SelectionActions compact />
@@ -146,6 +160,7 @@ export function JobRail({
             selected={job.id === selectedId}
             checked={selection.includes(job.id)}
             focused={job.id === focusedId}
+            position={positions.get(job.id)}
             onToggle={toggleSelected}
           />
         ))}
@@ -159,12 +174,14 @@ function RailRow({
   selected,
   checked,
   focused,
+  position,
   onToggle,
 }: {
   job: JobSummary
   selected: boolean
   checked: boolean
   focused: boolean
+  position?: number
   onToggle: (id: string, additive: boolean) => void
 }) {
   const title =
@@ -203,20 +220,14 @@ function RailRow({
       <span className="row__body">
         <span className="row__title">{jobLabel(job)}</span>
         <span className="row__meta">
-          {rowMeta(job)}
+          {rowMeta(job, position)}
           {job.state === 'running' && job.started_at
             ? ` · ${formatDuration((Date.now() - Date.parse(job.started_at)) / 1000)}`
             : ''}
         </span>
       </span>
       <StarToggle job={job} />
-      <Ring
-        size={20}
-        state={job.state}
-        currentEpoch={job.current_epoch}
-        targetEpoch={job.target_epoch}
-        numIter={job.num_iter}
-      />
+      <JobStatus job={job} size={20} position={position} />
     </div>
   )
 }

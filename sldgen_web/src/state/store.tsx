@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { api } from '../api/client'
+import { clampPriority } from '../lib/queue'
 import { subscribe, type ConnectionState } from '../api/stream'
 import type { DiskReport, Health, JobState, JobSummary, JobsEvent } from '../api/types'
 
@@ -27,6 +28,8 @@ interface AppState {
   setStarredOnly: (value: boolean) => void
   /** Star or unstar a job, optimistically, from wherever it is drawn. */
   toggleStar: (id: string) => void
+  /** Set jobs' queue priority (0 = default; higher runs sooner). Optimistic. */
+  setPriority: (ids: string[], priority: number | ((job: JobSummary) => number)) => Promise<void>
   /** Total bytes under the work root, and the growth since this session opened. */
   disk: DiskReport | null
   diskDelta: number
@@ -166,6 +169,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [toast],
   )
 
+  const setPriority = useCallback(
+    async (ids: string[], priority: number | ((job: JobSummary) => number)) => {
+      const before = new Map(
+        jobsRef.current.filter((job) => ids.includes(job.id)).map((job) => [job.id, job.priority]),
+      )
+      const wanted = new Map(
+        jobsRef.current
+          .filter((job) => before.has(job.id))
+          .map((job) => [job.id, clampPriority(typeof priority === 'function' ? priority(job) : priority)]),
+      )
+      const apply = (values: Map<string, number>) =>
+        setJobs((current) =>
+          current.map((job) => (values.has(job.id) ? { ...job, priority: values.get(job.id)! } : job)),
+        )
+      apply(wanted)
+      const results = await Promise.allSettled(
+        [...wanted].map(([id, value]) => api.patchJob(id, { priority: value })),
+      )
+      const failed = [...wanted.keys()].filter((_id, index) => results[index].status === 'rejected')
+      if (failed.length) {
+        apply(new Map(failed.map((id) => [id, before.get(id) ?? 0])))
+        toast(`Could not change the priority of ${failed.length} job${failed.length === 1 ? '' : 's'}.`)
+      }
+    },
+    [toast],
+  )
+
   const toggleSelected = useCallback((id: string, additive: boolean) => {
     setSelection((current) => {
       if (!additive) return current.length === 1 && current[0] === id ? [] : [id]
@@ -196,6 +226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       starredOnly,
       setStarredOnly,
       toggleStar,
+      setPriority,
       disk,
       diskDelta:
         disk && baselineDisk.current !== null ? disk.total_bytes - baselineDisk.current : 0,
@@ -215,6 +246,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       stateFilter,
       starredOnly,
       toggleStar,
+      setPriority,
       disk,
       selection,
       toggleSelected,

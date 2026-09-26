@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { navigate } from '../router'
+import { MAX_PRIORITY } from '../lib/queue'
 import { useApp } from '../state/store'
 import { DeleteJobsDialog } from './DeleteJobsDialog'
 import { RenameJobsDialog } from './RenameJobsDialog'
@@ -12,11 +13,14 @@ import { RenameJobsDialog } from './RenameJobsDialog'
  * delete in the other, and then having to remember which.
  */
 export function SelectionActions({ compact = false }: { compact?: boolean }) {
-  const { selection, setSelection } = useApp()
+  const { selection, setSelection, jobsById, setPriority } = useApp()
   const [confirming, setConfirming] = useState(false)
   const [renaming, setRenaming] = useState(false)
 
   if (selection.length === 0) return null
+  const selected = selection
+    .map((id) => jobsById.get(id))
+    .filter((job): job is NonNullable<typeof job> => Boolean(job))
 
   return (
     <>
@@ -36,6 +40,25 @@ export function SelectionActions({ compact = false }: { compact?: boolean }) {
         >
           Rename {selection.length}
         </button>
+        <button
+          type="button"
+          className={`btn${compact ? ' btn--small' : ''}`}
+          title="Raise the queue priority of the selected jobs by one: higher runs sooner"
+          disabled={selected.every((job) => job.priority >= MAX_PRIORITY)}
+          onClick={() => setPriority(selection, (job) => job.priority + 1)}
+        >
+          Priority +1
+        </button>
+        {selected.some((job) => job.priority > 0) && (
+          <button
+            type="button"
+            className={`btn${compact ? ' btn--small' : ''}`}
+            title="Put the selected jobs back to the default priority 0 (submission order)"
+            onClick={() => setPriority(selection, 0)}
+          >
+            Priority 0
+          </button>
+        )}
         <button
           type="button"
           className={`btn btn--danger${compact ? ' btn--small' : ''}`}

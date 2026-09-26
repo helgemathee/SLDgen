@@ -1,8 +1,9 @@
 import { JobThumb } from '../components/JobThumb'
-import { Ring } from '../components/Ring'
+import { JobStatus } from '../components/JobStatus'
 import { SelectionActions } from '../components/SelectionActions'
 import { StarToggle } from '../components/StarToggle'
 import { formatAgo, jobLabel } from '../lib/format'
+import { queueLabel, queuePositions } from '../lib/queue'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 
@@ -15,6 +16,7 @@ import { useApp } from '../state/store'
  */
 export function JobsPage() {
   const { jobs, selection, toggleSelected } = useApp()
+  const positions = queuePositions(jobs)
 
   if (jobs.length === 0) {
     return (
@@ -61,17 +63,13 @@ export function JobsPage() {
                 onChange={() => toggleSelected(job.id, true)}
               />
               <StarToggle job={job} />
-              <Ring
-                size={18}
-                state={job.state}
-                currentEpoch={job.current_epoch}
-                targetEpoch={job.target_epoch}
-                numIter={job.num_iter}
-              />
+              <JobStatus job={job} size={18} position={positions.get(job.id)} />
               <strong>{jobLabel(job)}</strong>
             </div>
             <div className="mono muted">
-              {job.current_epoch}/{job.num_iter} · {job.state} · {formatAgo(job.created_at)}
+              {job.current_epoch}/{job.num_iter} · {job.state}
+              {positions.has(job.id) ? ` (${queueLabel(positions.get(job.id))})` : ''} ·{' '}
+              {formatAgo(job.created_at)}
             </div>
             {job.resolved_caption && <div className="note">“{job.resolved_caption}”</div>}
           </div>

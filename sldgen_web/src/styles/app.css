@@ -350,6 +350,29 @@ a {
   letter-spacing: -0.02em;
 }
 
+/* A queued job's priority, in place of its ring (JobStatus): a fat number in
+ * the queued ring's grey outline. No new colour: priority is not a machine
+ * state, only an order. */
+.priority-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1.5px solid var(--st-queued);
+  border-radius: 50%;
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.priority-value {
+  min-width: 1.5em;
+  text-align: center;
+  font-weight: 700;
+}
+
 /* The job star (StarToggle). Unset stars appear only on hover or focus, so the
  * yellow ones are the only stars you see when scanning. */
 .star-toggle {

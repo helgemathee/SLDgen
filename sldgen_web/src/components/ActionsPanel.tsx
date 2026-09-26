@@ -4,6 +4,7 @@ import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatDuration } from '../lib/format'
 import { promoteSteps } from '../lib/promote'
+import { MAX_PRIORITY, queueLabel, queuePositions, runNextPriority } from '../lib/queue'
 import { useApp } from '../state/store'
 
 /**
@@ -25,7 +26,7 @@ export function ActionsPanel({
   onRunAgain: () => void
   onChanged: () => void
 }) {
-  const { toast, jobs, jobsById, toggleStar } = useApp()
+  const { toast, jobs, jobsById, toggleStar, setPriority } = useApp()
   const [promoteTo, setPromoteTo] = useState(job.num_iter)
   const [title, setTitle] = useState(job.title ?? '')
   const [withCheckpoints, setWithCheckpoints] = useState(false)
@@ -87,6 +88,14 @@ export function ActionsPanel({
   // From the live list rather than `job`, so the button flips the moment it is
   // clicked -- the detail is only refetched when the job changes state.
   const starred = jobsById.get(job.id)?.starred ?? job.starred
+  // Priority, likewise from the live list, and where that puts the job.
+  const live = jobsById.get(job.id)
+  const priority = live?.priority ?? job.priority
+  const position = queuePositions(jobs).get(job.id)
+  const nextPriority = live ? runNextPriority(live, jobs) : priority
+  // Priority orders the queue; it matters for a job that is queued now or may
+  // be again (promote/resume put it back in the queue with its priority).
+  const prioritisable = !['running', 'complete', 'deleting'].includes(job.state)
   const running = job.state === 'running'
   const waiting = job.state === 'waiting'
   const resumable = job.state === 'paused' && job.current_epoch < job.target_epoch
@@ -186,6 +195,64 @@ export function ActionsPanel({
                 so going past it means a new job, not a promotion.
               </div>
             )}
+          </div>
+        )}
+
+        {prioritisable && (
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 5 }}>
+              Queue priority
+            </div>
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn--small"
+                aria-label="Lower priority"
+                disabled={priority <= 0}
+                onClick={() => setPriority([job.id], priority - 1)}
+              >
+                −
+              </button>
+              <span className="priority-value mono" aria-label="Priority">
+                {priority}
+              </span>
+              <button
+                type="button"
+                className="btn btn--small"
+                aria-label="Raise priority"
+                disabled={priority >= MAX_PRIORITY}
+                onClick={() => setPriority([job.id], priority + 1)}
+              >
+                +
+              </button>
+              {job.state === 'queued' && position !== 1 && (
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  disabled={nextPriority === priority}
+                  title={
+                    nextPriority === priority
+                      ? `Jobs at the top priority (${MAX_PRIORITY}) that were submitted earlier stay ahead.`
+                      : `Sets priority ${nextPriority}, one above the job at the head of the queue.`
+                  }
+                  onClick={() => setPriority([job.id], nextPriority)}
+                >
+                  Run next
+                </button>
+              )}
+              {priority > 0 && (
+                <button type="button" className="btn btn--small" onClick={() => setPriority([job.id], 0)}>
+                  Reset
+                </button>
+              )}
+              <span className="note">
+                {job.state === 'queued' && position
+                  ? `${queueLabel(position)[0].toUpperCase()}${queueLabel(position).slice(1)}. `
+                  : ''}
+                Higher runs sooner; equal priorities go in submission order. A running job is never
+                interrupted.
+              </span>
+            </div>
           </div>
         )}
 
