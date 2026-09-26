@@ -101,6 +101,10 @@ export function LandmarkEditor({
   /** The sha256 the table was loaded from or last saved as: no re-upload of it. */
   const savedSha = useRef<string | null>(null)
   const dirty = useRef(false)
+  /** The latest save: an older upload finishing late must not attach stale content. */
+  const saveSeq = useRef(0)
+  /** The last pointerdown landed on a dot or square: its double-click adds nothing. */
+  const downOnHandle = useRef(false)
 
   const imageSize: [number, number] = canvas?.image_size ?? [512, 512]
 
@@ -165,6 +169,8 @@ export function LandmarkEditor({
     if (!dirty.current) return
     onPending(true)
     const timer = window.setTimeout(async () => {
+      saveSeq.current += 1
+      const seq = saveSeq.current
       try {
         if (placedCount(points) + lineCount(lines) === 0) {
           savedSha.current = null
@@ -173,6 +179,7 @@ export function LandmarkEditor({
         }
         const body = JSON.stringify(serialize(points, imageSize, { lines, pose }))
         const result = await api.upload(new Blob([body], { type: 'application/json' }), 'landmarks.json')
+        if (seq !== saveSeq.current) return // a newer save owns the attachment
         savedSha.current = result.sha256
         onAttach({
           source_kind: 'upload',
@@ -181,9 +188,10 @@ export function LandmarkEditor({
         })
         setProblem(null)
       } catch (error) {
-        setProblem(error instanceof Error ? error.message : 'Could not save the landmarks')
+        if (seq === saveSeq.current)
+          setProblem(error instanceof Error ? error.message : 'Could not save the landmarks')
       } finally {
-        onPending(false)
+        if (seq === saveSeq.current) onPending(false)
       }
     }, 400)
     return () => window.clearTimeout(timer)
@@ -271,6 +279,10 @@ export function LandmarkEditor({
         const lineReport = mergeLines(lines, detectedLines)
         change(report.points)
         changeLines(lineReport.lines)
+        // A merged line may have changed length or gone: keep the selection valid.
+        const still = lineReport.lines.find((entry) => entry.id === selectedLine)
+        if (!still) selectLine(null)
+        else if (selectedVertex !== null && selectedVertex >= still.xy.length) setSelectedVertex(null)
         setStatus(
           `${seen}${where}: ${report.added} added, ${report.updated} updated, ${report.kept} of yours kept` +
             `${report.removed ? `, ${report.removed} removed as hidden` : ''}.${extra}`,
@@ -334,6 +346,7 @@ export function LandmarkEditor({
   }) // re-bound each render: it closes over imageSize
 
   const onBackgroundDown = (event: React.PointerEvent) => {
+    downOnHandle.current = false
     if (!view) return
     svg.current?.setPointerCapture(event.pointerId)
     const at = toCanvas(event.clientX, event.clientY)
@@ -350,6 +363,7 @@ export function LandmarkEditor({
   const onPointDown = (event: React.PointerEvent, id: string) => {
     event.stopPropagation()
     if (mode === 'box') return onBackgroundDown(event)
+    downOnHandle.current = true
     svg.current?.setPointerCapture(event.pointerId)
     selectPoint(id)
     setDrag({ kind: 'move', id })
@@ -358,6 +372,7 @@ export function LandmarkEditor({
   const onVertexDown = (event: React.PointerEvent, id: string, index: number) => {
     event.stopPropagation()
     if (mode === 'box') return onBackgroundDown(event)
+    downOnHandle.current = true
     svg.current?.setPointerCapture(event.pointerId)
     selectLine(id, index)
     setDrag({ kind: 'vertex', id, index })
@@ -414,7 +429,10 @@ export function LandmarkEditor({
   }
 
   const onDoubleClick = (event: React.MouseEvent) => {
-    if (mode !== 'select') return
+    // Double-clicking a dot or a square grabs it; it must not add a point or
+    // vertex on top of it (the dblclick reaches the svg despite stopPropagation
+    // on pointerdown, and pointer capture retargets it there anyway).
+    if (mode !== 'select' || downOnHandle.current) return
     const at = toCanvas(event.clientX, event.clientY)
     const line = lines.find((entry) => entry.id === selectedLine)
     if (line) {
@@ -436,7 +454,8 @@ export function LandmarkEditor({
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if ((event.target as HTMLElement).tagName === 'INPUT') return
+    if ((event.target as HTMLElement).closest('input, select, textarea, button, [contenteditable]'))
+      return
     const target = points.find((point) => point.id === selected)
     if (event.key === 'Escape') {
       selectPoint(null)
@@ -449,8 +468,13 @@ export function LandmarkEditor({
         event.preventDefault()
         if (selectedVertex === null) {
           removeLine(line.id)
+        } else if (line.xy[selectedVertex]) {
+          const rest = line.xy.filter((_vertex, k) => k !== selectedVertex)
+          updateLine(line.id, { xy: rest })
+          // Select a neighbour, so repeated Delete keeps removing vertices
+          // rather than falling through to the whole line.
+          setSelectedVertex(rest.length ? Math.min(selectedVertex, rest.length - 1) : null)
         } else {
-          updateLine(line.id, { xy: line.xy.filter((_vertex, k) => k !== selectedVertex) })
           setSelectedVertex(null)
         }
         return
