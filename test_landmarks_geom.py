@@ -2,7 +2,8 @@
 
 No MediaPipe, no GPU: synthetic meshes, masks and keypoints exercise the yaw
 estimate, the culling table, the silhouette profile points and their
-consistency check, the box mapping and the Pose view.
+consistency check, the box mapping and the Pose view; and the addendum's
+landmark sets, weight budgets, rigid fit, visibility, hairline and glasses.
 
 Run from the repo root with the sldgen interpreter (numpy, scipy, PIL):
     PYTHONPATH=. python test_landmarks_geom.py
@@ -239,12 +240,231 @@ def test_box_and_pose():
     check("pose frontal reads as frontal", sl.view_kind(sl.pose_view(frontal)[2]) == "frontal")
 
 
+# -- landmark sets (Spec 7 addendum) --------------------------------------------
+
+
+def rotation(yaw=0.0, pitch=0.0, roll=0.0):
+    return sl.euler_rotation(yaw, pitch, roll)
+
+
+def posed_mesh(yaw=0.0, pitch=0.0, roll=0.0, scale=10.0, at=(256.0, 256.0, 0.0)):
+    """The canonical face (478 points) as a detector would return it, in pixels."""
+    vertices, _triangles = sl.canonical_model()
+    return scale * vertices @ rotation(yaw, pitch, roll).T + np.array(at)
+
+
+def test_sets():
+    print("\n--- landmark sets")
+    sparse = sl.set_entries("sparse")
+    check("sparse is the portrait table", sparse == [(n, i) for n, i, _w in sl.PORTRAIT])
+    standard = sl.set_entries("standard")
+    names = [n for n, _i in standard]
+    check("standard extends sparse", standard[: len(sparse)] == sparse and 45 <= len(standard) <= 55, str(len(standard)))
+    check("standard names unique", len(set(names)) == len(names))
+    check("standard indices unique", len({i for _n, i in standard}) == len(standard))
+    sided = [sl.split_side(n) for n in names]
+    check(
+        "every sided standard part has a turn limit",
+        all(part in sl.CULL_LIMIT for side, part in sided if side != "mid"),
+        ",".join(sorted({p for s, p in sided if s != "mid" and p not in sl.CULL_LIMIT})),
+    )
+    dense = sl.set_entries("dense")
+    check("dense has DENSE_COUNT points", len(dense) == sl.DENSE_COUNT, str(len(dense)))
+    check("dense indices unique", len({i for _n, i in dense}) == len(dense))
+    check("dense contains every standard point", set(standard) <= set(dense))
+    check("dense is deterministic", dense == sl.set_entries("dense"))
+    check("dense unnamed points are m<index>", all(n == f"m{i}" for n, i in dense if (n, i) not in standard))
+    check("pose-locked uses the dense layout", sl.set_entries("pose-locked") == dense)
+    vertices, _t = sl.canonical_model()
+    chosen = vertices[[i for _n, i in dense if i < 468]]
+    gaps = [np.sort(np.linalg.norm(chosen - p, axis=1))[1] for p in chosen]
+    check("dense points are spread (no near-duplicates)", min(gaps) > 0.3, f"min gap {min(gaps):.2f} cm")
+
+
+def test_weights():
+    print("\n--- anchor-cell weight budgets")
+    budgets = {i: w for _n, i, w in sl.PORTRAIT}
+    anchor_total = sum(budgets.values())
+    eyes = {33, 133, 362, 263, 468, 473}
+    for name in ("standard", "dense"):
+        entries = sl.set_entries(name)
+        weights, cells = sl.anchor_weights(entries)
+        weights, cells = np.array(weights), np.array(cells)
+        per_anchor = [weights[cells == k].sum() for k in range(len(sl.PORTRAIT))]
+        check(
+            f"{name}: every anchor's cell sums to its portrait weight",
+            np.allclose(per_anchor, [w for _n, _i, w in sl.PORTRAIT], atol=5e-3),
+            f"max err {np.max(np.abs(np.array(per_anchor) - [w for _n, _i, w in sl.PORTRAIT])):.4f}",
+        )
+        surface = weights[cells == len(sl.PORTRAIT)].sum()
+        check(f"{name}: surface cell within its budget", surface <= sl.SURFACE_BUDGET + 1e-3, f"{surface:.3f}")
+        eye_share = sum(per_anchor[k] for k, (_n, i, _w) in enumerate(sl.PORTRAIT) if i in eyes) / sum(per_anchor)
+        sparse_share = sum(budgets[i] for i in eyes) / anchor_total
+        check(f"{name}: eyes keep the portrait share of the anchor weight", abs(eye_share - sparse_share) < 1e-3,
+              f"{eye_share:.4f} vs {sparse_share:.4f}")
+        # The loss is a weighted mean: every landmark d px off costs d, whatever the set.
+        d = 7.0
+        check(f"{name}: a uniform d px offset costs d", abs((weights * d).sum() / weights.sum() - d) < 1e-9)
+        check(f"{name}: every weight positive", weights.min() > 0)
+
+
+def test_set_culling():
+    print("\n--- culling in the new sets")
+    mesh = posed_mesh()
+    for name in ("standard", "dense"):
+        chosen, dropped = sl.select_set(mesh, 0.0, name)
+        check(f"{name}: frontal keeps every point", not dropped and len(chosen) == len(sl.set_entries(name)))
+    chosen, dropped = sl.select_set(mesh, -32.0, "standard")
+    check("standard: the far outline goes at -32", {"right_temple", "right_jaw_low", "right_brow_outer_mid"} <= set(dropped))
+    check("standard: the near outline stays", not any(n.startswith("left_") for n in dropped))
+    check("standard: the midline stays", not ({"nose_tip", "stomion", "nasion"} & set(dropped)))
+    chosen, dropped = sl.select_set(mesh, -32.0, "dense")
+    vertices, _t = sl.canonical_model()
+    far = [n for n in dropped if n.startswith("m")]
+    check("dense: unnamed far points culled at -32", len(far) > 5, str(len(far)))
+    check("dense: only image-left (the subject's right) points culled",
+          all(vertices[int(n[1:]), 0] < 0 for n in far))
+    outer = int(np.argmax(np.abs(vertices[:468, 0])))
+    check("dense: lateral rule, outline at 21 degrees", sl.lateral_hidden(outer, 21.0 if vertices[outer, 0] > 0 else -21.0))
+    check("dense: lateral rule, midline never", not sl.lateral_hidden(4, -60.0))
+    check("dense: near side never", not sl.lateral_hidden(outer, -60.0 if vertices[outer, 0] > 0 else 60.0))
+
+
+def test_rigid_fit():
+    print("\n--- rigid fit, pose report, visibility")
+    for angles in ((-25.0, 0.0, 0.0), (0.0, 12.0, 0.0), (0.0, 0.0, 8.0), (-20.0, 6.0, -4.0)):
+        fit = sl.fit_rigid(posed_mesh(*angles, scale=11.0), angles[0])
+        got = sl.pose_angles(fit["R"])
+        check(f"fit recovers yaw/pitch/roll {angles}", np.allclose(got, angles, atol=0.2), str(np.round(got, 2)))
+        check(f"fit recovers the scale {angles}", abs(fit["scale"] - 11.0) < 1e-6 and fit["residual_px"] < 1e-6)
+    left = sl.pose_angles(rotation(yaw=-30.0))
+    forward = rotation(yaw=-30.0) @ np.array([0.0, 0.0, -1.0])
+    check("negative yaw faces image-left", forward[0] < 0 and left[0] < 0)
+    report = sl.pose_report(sl.fit_rigid(posed_mesh(-20.0, 6.0, -4.0), -20.0))
+    check("pose report keys", set(report) == {"yaw", "pitch", "roll", "method", "residual_px"}
+          and report["method"] == "rigid-fit" and report["yaw"] == -20.0)
+
+    # Visibility on the canonical surface.
+    visible = sl.visible_points(sl.fit_rigid(posed_mesh(), 0.0))
+    dense = [i for _n, i in sl.set_entries("dense")]
+    check("frontal: every dense point visible", visible[dense].all())
+    check("frontal: only the inner lip corners hide (behind the lips)",
+          set(np.nonzero(~visible)[0]) <= {78, 80, 191, 308, 310, 415}, str(np.nonzero(~visible)[0]))
+    visible = sl.visible_points(sl.fit_rigid(posed_mesh(-40.0), -40.0))
+    check("-40: far cheek and far inner eye corner hidden", not visible[234] and not visible[133])
+    check("-40: near cheek, midline and near pupil visible", visible[454] and visible[4] and visible[13] and visible[473])
+
+    # A frontal detection that matches the model is kept as detected.
+    chosen, dropped, _fit = sl.select_pose_locked(posed_mesh(), 0.0)
+    check("pose-locked frontal: all points, all detected", len(chosen) == sl.DENSE_COUNT and not dropped
+          and all(p["source"] == "mesh" for p in chosen), f"{len(chosen)} {dropped[:5]}")
+
+    # Three-quarter: the far outer eye corner collapsed onto the nose bridge
+    # comes back where the rigid model puts it; an outlier near point too.
+    mesh = posed_mesh(-30.0)
+    truth = mesh.copy()
+    mesh[33] = mesh[168]
+    mesh[263, 0] += 40.0
+    chosen, dropped, fit = sl.select_pose_locked(mesh, -30.0)
+    by = {p["name"]: p for p in chosen}
+    check("pose-locked: collapsed far eye corner re-placed by the model",
+          by["right_eye_outer"]["source"] == "model" and np.allclose(by["right_eye_outer"]["xy"], truth[33, :2], atol=0.5),
+          str(by["right_eye_outer"]))
+    check("pose-locked: near outlier re-placed by the model",
+          by["left_eye_outer"]["source"] == "model" and np.allclose(by["left_eye_outer"]["xy"], truth[263, :2], atol=0.5))
+    check("pose-locked: consistent near point kept as detected", by["left_eye_inner"]["source"] == "mesh")
+    check("pose-locked: the fit ignores the corrupted points", fit["residual_px"] < 0.5, f"{fit['residual_px']:.2f}")
+    check("pose-locked: far cheek dropped as hidden", "cheek_right" in dropped)
+
+    profile = [sl._point("nose_tip", (1, 2), 3.0, "silhouette")]
+    merged = sl.with_silhouette([sl._point("nose_tip", (5, 5), 0.5, "mesh"), sl._point("chin", (9, 9), 0.5, "mesh")], profile)
+    check("silhouette names replace mesh names", [p["source"] for p in merged if p["name"] == "nose_tip"] == ["silhouette"]
+          and len(merged) == 2)
+
+
+def hairline_scene(hair_row, size=512):
+    """A frontal canonical face on skin, hair above ``hair_row``: (rgb, points)."""
+    points = posed_mesh(scale=14.0)
+    rgb = np.zeros((size, size, 3), dtype=np.uint8)
+    rgb[:] = (224, 172, 140)  # skin
+    rgb[: int(hair_row)] = (60, 40, 30)  # dark hair
+    return rgb, points
+
+
+def test_hairline():
+    print("\n--- hairline and glasses")
+    check("Lab of white and black", np.allclose(sl.rgb_to_lab(np.array([255, 255, 255])), [100, 0, 0], atol=0.1)
+          and np.allclose(sl.rgb_to_lab(np.array([0, 0, 0])), [0, 0, 0], atol=0.1))
+    points = posed_mesh(scale=14.0)
+    top = points[10, 1]
+    brow = points[list(sl.BROWS), 1].min()
+    for label, row in (("above the mesh", top - 20), ("a fringe below the mesh top", top + 0.3 * (brow - top))):
+        rgb, points = hairline_scene(row)
+        line = sl.hairline_polyline(rgb, points)
+        ys = [] if line is None else [y for _x, y in line["xy"]]
+        check(f"hairline {label}: found", line is not None and len(ys) >= 5, f"{len(ys)} vertices")
+        # A march along a slanted ray lands within a couple of pixels of the edge.
+        check(f"hairline {label}: on the edge", line is not None and max(abs(y - row) for y in ys) <= 3.0,
+              f"row {row:.1f}, got {np.round(ys, 1).tolist()}")
+    rgb, points = hairline_scene(top - 20)
+    check("hairline: open polyline, weighted, tagged", (lambda l: l["closed"] is False and l["weight"] == sl.HAIRLINE_WEIGHT
+          and l["source"] == "hairline")(sl.hairline_polyline(rgb, points)))
+    bald = np.zeros_like(rgb)
+    bald[:] = (224, 172, 140)
+    mask = np.zeros(rgb.shape[:2], dtype=bool)
+    mask[int(top - 30):, :] = True
+    check("hairline: bald head (march leaves the mask) -> none", sl.hairline_polyline(bald, points, mask=mask) is None)
+    hair = np.zeros(rgb.shape[:2], dtype=bool)
+    hair[: int(top - 10)] = True
+    line = sl.hairline_polyline(bald, points, hair_mask=hair)
+    check("hairline: a supplied hair mask replaces the colour test",
+          line is not None and max(abs(y - (top - 10)) for _x, y in line["xy"]) <= 3.0)
+
+    import json
+    import tempfile
+    from pathlib import Path
+
+    folder = Path(tempfile.mkdtemp())
+    rim = {"name": "glasses_left_rim", "closed": True, "weight": 3.0, "xy": [[10, 10], [30, 10], [30, 25], [10, 25]]}
+    (folder / "g.json").write_text(json.dumps({"polylines": [rim]}))
+    (folder / "bare.json").write_text(json.dumps([rim]))
+    (folder / "out.json").write_text(json.dumps([{**rim, "xy": [[10, 10], [600, 10], [30, 25]]}]))
+    (folder / "bad.json").write_text("{nope")
+    lines = sl.load_glasses(folder / "g.json", (512, 512))
+    check("glasses file read", len(lines) == 1 and lines[0]["source"] == "manual" and lines[0]["closed"])
+    check("glasses bare list read", sl.load_glasses(folder / "bare.json", (512, 512)) == lines)
+    for name in ("out.json", "bad.json"):
+        try:
+            sl.load_glasses(folder / name, (512, 512))
+            check(f"glasses {name} refused", False)
+        except ValueError:
+            check(f"glasses {name} refused", True)
+
+
+def test_cli():
+    print("\n--- CLI flags")
+    base = ["--image", "x.png", "--out", "y.json"]
+    check("landmark set defaults to sparse", sl.parse_arguments(base).landmark_set == "sparse")
+    for bad in (["--preset", "all", "--landmark-set", "dense"], ["--hair-mask", "h.png"], ["--landmark-set", "huge"]):
+        try:
+            sl.parse_arguments(base + bad)
+            check(f"refused: {' '.join(bad)}", False)
+        except SystemExit:
+            check(f"refused: {' '.join(bad)}", True)
+
+
 def main():
     test_triangles_from_edges()
     test_yaw()
     test_culling()
     test_silhouette()
     test_box_and_pose()
+    test_sets()
+    test_weights()
+    test_set_culling()
+    test_rigid_fit()
+    test_hairline()
+    test_cli()
     failed = RESULTS.count(False)
     print(f"\n{len(RESULTS) - failed}/{len(RESULTS)} passed")
     sys.exit(1 if failed else 0)

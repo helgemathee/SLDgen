@@ -1,0 +1,9 @@
+canonical_face_model.obj is MediaPipe's canonical face model, copied unchanged from
+https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/modules/face_geometry/data/canonical_face_model.obj
+
+Copyright The MediaPipe Authors. Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+Its 468 vertices are the Face Mesh landmark indices 0-467 (cm, y up, z toward the
+viewer). sld_landmarks.py uses it for the dense set's layout, the weight budgets and
+the pose-locked rigid fit (docs/sldgen-spec-7-landmark-addendum.md).
