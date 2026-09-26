@@ -39,6 +39,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from . import canny_attract
+from .polylines import parse_polylines, polyline_points
 
 #: Where decay/ramp start when ``--image-loss-schedule-start`` is not given.
 DEFAULT_START = {"decay": 0.5, "ramp": 0.05}
@@ -289,6 +290,9 @@ def build_edge_map(args, input_image, mask):
 def load_landmarks(path, render_size):
     """``(xy (L, 2), weight (L,))`` from a ``sld_landmarks.py`` JSON.
 
+    Polylines (Spec 7 addendum SS6) are densified here, each sharing its weight
+    over its points, and appended: the landmark term sees one flat list.
+
     Refused unless it declares canvas space at the render size. There is no
     rescaling path on purpose: a coordinate mismatch here looks exactly like
     "the feature does not work", so the contract is the one every spatial input
@@ -312,6 +316,12 @@ def load_landmarks(path, render_size):
         weight = [float(e.get("weight", 1.0)) for e in entries]
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         raise ValueError(f"--image-loss-landmarks {path} has a malformed landmark ({exc}).")
+    try:
+        line_xy, line_weight = polyline_points(parse_polylines(payload.get("polylines")))
+    except ValueError as exc:
+        raise ValueError(f"--image-loss-landmarks {path}: {exc}.")
+    xy += line_xy
+    weight += line_weight
     if not xy or min(weight) < 0 or sum(weight) <= 0:
         raise ValueError(
             f"--image-loss-landmarks {path} needs at least one landmark with a positive weight."

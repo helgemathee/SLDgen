@@ -347,6 +347,69 @@ def test_landmark():
     return ok
 
 
+def test_polylines():
+    """Spec 7 addendum SS6: polylines densified in the loader, weight shared out."""
+    import json
+    import math
+
+    from SLDgen.image_loss import load_landmarks
+    from SLDgen.polylines import SPACING, densify, parse_polylines
+
+    ok = True
+    square = [(10.0, 10.0), (50.0, 10.0), (50.0, 50.0), (10.0, 50.0)]
+    closed = densify(square, True)
+    gaps = [math.dist(a, b) for a, b in zip(closed, closed[1:] + closed[:1])]
+    ok &= check("polyline: no gap wider than the spacing", max(gaps) <= SPACING + 1e-9, f"max {max(gaps):.2f}")
+    ok &= check("polyline: every vertex kept", all(v in closed for v in square))
+    ok &= check("polyline: closed does not repeat its first vertex", closed.count(square[0]) == 1)
+    ok &= check("polyline: closed = 4 sides x 5 parts", len(closed) == 20, str(len(closed)))
+    opened = densify(square, False)
+    ok &= check("polyline: open = 3 sides x 5 parts + 1", len(opened) == 16 and opened[-1] == square[-1], str(len(opened)))
+
+    def write(name, payload):
+        path = SCRATCH / name
+        path.write_text(json.dumps({"space": "canvas", "image_size": [256, 256], **payload}))
+        return str(path)
+
+    path = write("pl.json", {
+        "landmarks": [{"name": "a", "xy": [200, 200], "weight": 2.0}],
+        "polylines": [{"name": "rim", "closed": True, "weight": 3.0, "xy": square}],
+    })
+    xy, weight = load_landmarks(path, 256)
+    ok &= check("polyline: appended after the landmarks", len(xy) == 21 and xy[0].tolist() == [200.0, 200.0])
+    ok &= check(
+        "polyline: weighs as one landmark of its weight",
+        close(float(weight[1:].sum()), 3.0, 1e-5) and close(float(weight[1:].std()), 0.0, 1e-6),
+        f"sum {float(weight[1:].sum())}",
+    )
+    only = write("pl_only.json", {"landmarks": [], "polylines": [{"name": "l", "xy": [[0, 0], [30, 0]]}]})
+    xy, weight = load_landmarks(only, 256)
+    ok &= check("polyline: a file of polylines alone is valid", len(xy) == 5 and close(float(weight.sum()), 1.0, 1e-6))
+    none = write("pl_none.json", {"landmarks": [{"name": "a", "xy": [1, 1], "weight": 1.0}]})
+    ok &= check("polyline: no polylines key behaves as before", len(load_landmarks(none, 256)[0]) == 1)
+
+    for label, lines in (
+        ("one vertex", [{"name": "x", "xy": [[1, 1]]}]),
+        ("closed with two", [{"name": "x", "closed": True, "xy": [[1, 1], [5, 5]]}]),
+        ("negative weight", [{"name": "x", "weight": -1, "xy": [[1, 1], [5, 5]]}]),
+        ("no name", [{"xy": [[1, 1], [5, 5]]}]),
+        ("bad xy", [{"name": "x", "xy": [[1], [5, 5]]}]),
+        ("not a list", {"name": "x"}),
+    ):
+        try:
+            parse_polylines(lines)
+            ok &= check(f"polyline {label} refused", False)
+        except ValueError:
+            ok &= check(f"polyline {label} refused", True)
+    broken = write("pl_bad.json", {"landmarks": [], "polylines": [{"name": "x", "xy": [[1, 1]]}]})
+    try:
+        load_landmarks(broken, 256)
+        ok &= check("polyline: loader refuses a bad polyline", False)
+    except ValueError as exc:
+        ok &= check("polyline: loader refuses a bad polyline, names it", "polylines[0]" in str(exc), str(exc))
+    return ok
+
+
 def test_pyramid_is_independent_of_the_sds_backward():
     """Regression: DiffVG accumulates across backward passes through one raster.
 
@@ -495,6 +558,7 @@ def main():
         test_loss_object,
         test_pyramid,
         test_landmark,
+        test_polylines,
         test_pyramid_is_independent_of_the_sds_backward,
         test_log_resume,
         test_validation,
