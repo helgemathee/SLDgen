@@ -12,6 +12,7 @@ import type { InputRef, OptionalField } from '../lib/formstate'
 import { scheduleSeries, sparkline } from '../lib/imageloss'
 import { IMAGE_LOSS_DEFAULT_START, SPEC_BY_NAME } from '../lib/params'
 import { jobLabel } from '../lib/format'
+import { UI_HELP, paramTooltip } from '../lib/help'
 
 type EdgeSource = 'derived' | 'prepared' | 'file'
 
@@ -212,8 +213,8 @@ export function ImageLossPanel({
   const edgePixels = preview?.edge_pixels ?? null
 
   const number = (name: string, extra?: { placeholder?: string }) => (
-    <div className="field" key={name}>
-      <label htmlFor={`il-${name}`} title={name}>
+    <div className="field" key={name} title={paramTooltip(SPEC_BY_NAME[name])}>
+      <label htmlFor={`il-${name}`}>
         {SPEC_BY_NAME[name].label}
       </label>
       <input
@@ -242,18 +243,19 @@ export function ImageLossPanel({
         type="checkbox"
         checked={enabled}
         aria-label="Use image fidelity"
+        title={paramTooltip(SPEC_BY_NAME.image_loss)}
         onChange={(event) => onChange('image_loss', event.target.checked)}
       />
       <div className="optional__body">
-        <strong>{SPEC_BY_NAME.image_loss.label}</strong>
+        <strong title={paramTooltip(SPEC_BY_NAME.image_loss)}>{SPEC_BY_NAME.image_loss.label}</strong>
         <div className="note">{SPEC_BY_NAME.image_loss.hint}</div>
 
         {enabled && (
           <>
-            <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
+            <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.strength}>
               Strength
             </div>
-            <div className="field">
+            <div className="field" title={paramTooltip(SPEC_BY_NAME.image_loss_weight)}>
               <label htmlFor="il-weight">{SPEC_BY_NAME.image_loss_weight.label}</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input
@@ -279,7 +281,7 @@ export function ImageLossPanel({
               </div>
             </div>
             <div className="grid-knobs">
-              <div className="field">
+              <div className="field" title={paramTooltip(SPEC_BY_NAME.image_loss_schedule)}>
                 <label htmlFor="il-schedule">{SPEC_BY_NAME.image_loss_schedule.label}</label>
                 <select
                   id="il-schedule"
@@ -317,7 +319,7 @@ export function ImageLossPanel({
               </div>
             )}
 
-            <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
+            <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.terms}>
               Terms
             </div>
             <div className="grid-knobs">
@@ -333,7 +335,7 @@ export function ImageLossPanel({
 
             {wantsLandmarks && (
               <>
-                <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
+                <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.landmarks}>
                   Landmarks
                 </div>
                 {inheritedLandmarks ? (
@@ -352,6 +354,7 @@ export function ImageLossPanel({
                         type="button"
                         className="btn btn--small"
                         disabled={!targetSha256 || extracting}
+                        title={UI_HELP.extractLandmarks}
                         onClick={extract}
                       >
                         {extracting ? 'Finding the face…' : 'Extract from a previous run'}
@@ -415,7 +418,7 @@ export function ImageLossPanel({
               </>
             )}
 
-            <div className="eyebrow" style={{ margin: '8px 0 4px' }}>
+            <div className="eyebrow" style={{ margin: '8px 0 4px' }} title={UI_HELP.edgeMap}>
               Edge map
             </div>
             {inheritedTarget ? (
@@ -433,7 +436,11 @@ export function ImageLossPanel({
                         ['file', 'From a file'],
                       ] as const
                     ).map(([value, label]) => (
-                      <label key={value} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <label
+                        key={value}
+                        style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+                        title={EDGE_SOURCE_HELP[value]}
+                      >
                         <input
                           type="radio"
                           name="il-source"
@@ -456,7 +463,7 @@ export function ImageLossPanel({
 
                 {source === 'prepared' && (
                   <div className="grid-knobs">
-                    <div className="field">
+                    <div className="field" title={UI_HELP.claheClip}>
                       <label htmlFor="il-clahe">CLAHE clip</label>
                       <input
                         id="il-clahe"
@@ -467,7 +474,7 @@ export function ImageLossPanel({
                         onChange={(event) => setPrep({ ...prep, clahe_clip: Number(event.target.value) })}
                       />
                     </div>
-                    <div className="field">
+                    <div className="field" title={UI_HELP.claheGrid}>
                       <label htmlFor="il-grid">CLAHE grid</label>
                       <input
                         id="il-grid"
@@ -477,7 +484,7 @@ export function ImageLossPanel({
                         onChange={(event) => setPrep({ ...prep, clahe_grid: Number(event.target.value) })}
                       />
                     </div>
-                    <div className="field">
+                    <div className="field" title={UI_HELP.roi}>
                       <label htmlFor="il-roi">ROI x0 y0 x1 y1</label>
                       <input
                         id="il-roi"
@@ -487,7 +494,10 @@ export function ImageLossPanel({
                         onChange={(event) => setPrep({ ...prep, roi: event.target.value })}
                       />
                     </div>
-                    <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <label
+                      style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+                      title={UI_HELP.keepSilhouette}
+                    >
                       <input
                         type="checkbox"
                         checked={prep.preserve_silhouette}
@@ -618,6 +628,12 @@ export function ImageLossPanel({
       </div>
     </div>
   )
+}
+
+const EDGE_SOURCE_HELP: Record<EdgeSource, string> = {
+  derived: UI_HELP.edgeDerived,
+  prepared: UI_HELP.edgePrepared,
+  file: UI_HELP.edgeFile,
 }
 
 function initialSource(target: OptionalField | undefined): EdgeSource {

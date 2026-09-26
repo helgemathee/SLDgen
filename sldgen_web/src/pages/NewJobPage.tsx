@@ -24,6 +24,7 @@ import {
   type ParamSection,
 } from '../lib/params'
 import { overlayUrl } from '../lib/sources'
+import { UI_HELP, paramTooltip } from '../lib/help'
 import { navigate } from '../router'
 import { useApp } from '../state/store'
 
@@ -186,7 +187,7 @@ export function NewJobPage() {
     <div className="page">
       <section>
         <div className="section-head">
-          <span className="eyebrow">1 · Source</span>
+          <span className="eyebrow" title={UI_HELP.source}>1 · Source</span>
           {upload && <span className="mono muted">{upload.sha256.slice(0, 12)}…</span>}
         </div>
         <div
@@ -246,10 +247,10 @@ export function NewJobPage() {
       {upload && (
         <section>
           <div className="section-head">
-            <span className="eyebrow">2 · Prepare</span>
+            <span className="eyebrow" title={UI_HELP.prepare}>2 · Prepare</span>
           </div>
 
-          <table className="mode-table" style={{ marginBottom: 10 }}>
+          <table className="mode-table" style={{ marginBottom: 10 }} title={UI_HELP.maskMode}>
             <tbody>
               {MASK_MODES.map((entry) => (
                 <tr key={entry.mode} aria-selected={form.maskMode === entry.mode}>
@@ -298,12 +299,13 @@ export function NewJobPage() {
 
       <section>
         <div className="section-head">
-          <span className="eyebrow">3 · Parameters</span>
+          <span className="eyebrow" title={UI_HELP.parameters}>3 · Parameters</span>
           {loaded && <span className="note">Carried over from your last submission.</span>}
           <span style={{ flex: 1 }} />
           <select
             className="input"
             style={{ width: 150 }}
+            title={UI_HELP.preset}
             value=""
             onChange={(event) => {
               const preset = presets.find((entry) => entry.id === event.target.value)
@@ -321,6 +323,7 @@ export function NewJobPage() {
             className="input"
             style={{ width: 130 }}
             placeholder="Preset name"
+            title={UI_HELP.presetName}
             value={presetName}
             onChange={(event) => setPresetName(event.target.value)}
           />
@@ -346,7 +349,7 @@ export function NewJobPage() {
           </button>
         </div>
 
-        <div className="field">
+        <div className="field" title={UI_HELP.title}>
           <label htmlFor="job-title">Title</label>
           <input
             id="job-title"
@@ -362,7 +365,7 @@ export function NewJobPage() {
         {/* Its own group, like the Canny panel: the knobs need the edge map
             they produce next to them, and the file roles need a picker. */}
         <details className="group" open={Boolean(form.params.image_loss)}>
-          <summary>
+          <summary title={UI_HELP.imageFidelity}>
             <span className="eyebrow">Image fidelity</span>
             {Boolean(form.params.image_loss) && <span className="mono">on</span>}
           </summary>
@@ -387,7 +390,7 @@ export function NewJobPage() {
         />
 
         <details className="group" open>
-          <summary>
+          <summary title={UI_HELP.constraintsGroup}>
             <span className="eyebrow">Constraints</span>
           </summary>
           <div className="group__body">
@@ -396,10 +399,11 @@ export function NewJobPage() {
                 type="checkbox"
                 checked={form.optional.origin?.enabled ?? false}
                 aria-label="Use origin"
+                title={paramTooltip(SPEC_BY_NAME.origin)}
                 onChange={(event) => setOptional('origin', { enabled: event.target.checked })}
               />
               <div className="optional__body">
-                <strong>{SPEC_BY_NAME.origin.label}</strong>
+                <strong title={paramTooltip(SPEC_BY_NAME.origin)}>{SPEC_BY_NAME.origin.label}</strong>
                 <div className="note">
                   {SPEC_BY_NAME.origin.hint} Click “place origin” on the canvas above.
                 </div>
@@ -445,9 +449,9 @@ export function NewJobPage() {
 
       <section>
         <div className="section-head">
-          <span className="eyebrow">4 · Budget</span>
+          <span className="eyebrow" title={UI_HELP.budget}>4 · Budget</span>
         </div>
-        <div className="field">
+        <div className="field" title={UI_HELP.horizon}>
           <label htmlFor="horizon">Horizon</label>
           <div>
             <input
@@ -465,7 +469,7 @@ export function NewJobPage() {
             </div>
           </div>
         </div>
-        <div className="field">
+        <div className="field" title={UI_HELP.runBudget}>
           <label htmlFor="budget">This run's budget</label>
           <div>
             <input

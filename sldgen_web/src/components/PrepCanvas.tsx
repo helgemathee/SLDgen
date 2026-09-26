@@ -11,6 +11,7 @@ import {
 } from '../lib/lab'
 import type { MaskMode } from '../lib/formstate'
 import { MASK_MODES } from '../lib/formstate'
+import { UI_HELP } from '../lib/help'
 
 /** Interaction speed matters more than fidelity while selecting (Spec 3 SS8.2). */
 const WORKING_MAX = 2048
@@ -433,6 +434,7 @@ export function PrepCanvas({
             type="button"
             className="btn"
             aria-pressed={tool === 'wand'}
+            title={UI_HELP.selectSimilar}
             onClick={() => setTool('wand')}
           >
             Select similar
@@ -441,6 +443,7 @@ export function PrepCanvas({
             type="button"
             className="btn"
             aria-pressed={tool === 'brush-add'}
+            title={UI_HELP.brushAdd}
             onClick={() => setTool('brush-add')}
           >
             Brush add
@@ -449,6 +452,7 @@ export function PrepCanvas({
             type="button"
             className="btn"
             aria-pressed={tool === 'brush-remove'}
+            title={UI_HELP.brushRemove}
             onClick={() => setTool('brush-remove')}
           >
             Brush remove
@@ -471,7 +475,7 @@ export function PrepCanvas({
 
         {tool === 'wand' && (
           <>
-            <div className="slider-field">
+            <div className="slider-field" title={UI_HELP.tolerance}>
               <label htmlFor="tolerance">Tolerance — what gets selected</label>
               <input
                 id="tolerance"
@@ -483,7 +487,11 @@ export function PrepCanvas({
               />
               <span className="mono">{tolerance}</span>
             </div>
-            <label className="note" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <label
+              className="note"
+              style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+              title={UI_HELP.contiguous}
+            >
               <input
                 type="checkbox"
                 checked={contiguous}
@@ -497,7 +505,7 @@ export function PrepCanvas({
 
         {(tool === 'brush-add' || tool === 'brush-remove' || tool === 'density') && (
           <>
-            <div className="slider-field">
+            <div className="slider-field" title={UI_HELP.radius}>
               <label htmlFor="radius">Radius</label>
               <input
                 id="radius"
@@ -509,7 +517,7 @@ export function PrepCanvas({
               />
               <span className="mono">{brushRadius}</span>
             </div>
-            <div className="slider-field">
+            <div className="slider-field" title={UI_HELP.hardness}>
               <label htmlFor="hardness">Hardness</label>
               <input
                 id="hardness"
@@ -525,7 +533,7 @@ export function PrepCanvas({
         )}
 
         {tool === 'density' && (
-          <div className="slider-field">
+          <div className="slider-field" title={UI_HELP.density}>
             <label htmlFor="density-value">Density — 0 is no ink, 1 is full</label>
             <input
               id="density-value"
@@ -539,7 +547,7 @@ export function PrepCanvas({
           </div>
         )}
 
-        <div className="slider-field">
+        <div className="slider-field" title={UI_HELP.feather}>
           <label htmlFor="feather">Feather — how the edge falls off</label>
           <input
             id="feather"

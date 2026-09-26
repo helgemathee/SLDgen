@@ -6,6 +6,7 @@ import {
   type ParamSection,
   type ParamSpec,
 } from '../lib/params'
+import { SECTION_HELP, paramTooltip } from '../lib/help'
 
 /**
  * The parameter form, shared by the new-job flow (Spec 3 SS8.3) and run-again
@@ -42,7 +43,7 @@ export function ParamFields({
           : 0
         return (
           <details key={section} className="group" open={!collapsed.includes(section)}>
-            <summary>
+            <summary title={SECTION_HELP[section]}>
               <span className="eyebrow">{SECTION_LABELS[section]}</span>
               {changedHere > 0 && <span className="mono">{changedHere} changed</span>}
             </summary>
@@ -87,8 +88,8 @@ export function Field({
   const boolean = spec.kind === 'true_flag' || spec.kind === 'false_flag'
 
   return (
-    <div className={`field${changed ? ' changed' : ''}`}>
-      <label htmlFor={`param-${spec.name}`} title={spec.name}>
+    <div className={`field${changed ? ' changed' : ''}`} title={paramTooltip(spec)}>
+      <label htmlFor={`param-${spec.name}`}>
         {spec.label}
       </label>
       <div>
