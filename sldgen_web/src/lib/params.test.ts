@@ -31,6 +31,8 @@ describe('the parameter schema', () => {
     expect(PARAM_SPECS.filter((spec) => spec.optional).map((spec) => spec.name).sort()).toEqual([
       'attract',
       'avoid',
+      'image_loss_landmarks',
+      'image_loss_target',
       'init_points',
       'origin',
       'stipple_weight',
@@ -57,15 +59,19 @@ describe('defaultParams', () => {
 })
 
 describe('withoutInputPaths', () => {
-  it('drops the four the service refuses to accept directly', () => {
+  it('drops the ones the service refuses to accept directly', () => {
     const stripped = withoutInputPaths({
       ...defaultParams(),
       avoid: ['x.svg'],
       attract: ['y.svg'],
       init_points: 'z.svg',
       stipple_weight: 'w.png',
+      image_loss_target: 'e.png',
+      image_loss_landmarks: 'l.json',
       seed: 4,
     })
+    expect(stripped.image_loss_target).toBeUndefined()
+    expect(stripped.image_loss_landmarks).toBeUndefined()
     expect(stripped.avoid).toBeUndefined()
     expect(stripped.attract).toBeUndefined()
     expect(stripped.init_points).toBeUndefined()
@@ -219,5 +225,30 @@ describe('sameRun', () => {
 
   it('is false when a structural parameter differs', () => {
     expect(sameRun(defaultParams(), { ...defaultParams(), lr: 0.4 })).toBe(false)
+  })
+})
+
+describe('validateParams: image fidelity', () => {
+  const on = (overrides: Record<string, unknown>) =>
+    validateParams({ ...defaultParams(), image_loss: true, ...overrides } as never)
+
+  it('accepts the defaults, and ignores the knobs while off', () => {
+    expect(on({})).toEqual([])
+    expect(validateParams({ ...defaultParams(), image_loss_weight: 7 })).toEqual([])
+  })
+
+  it('mirrors the server rules', () => {
+    expect(on({ image_loss_weight: 0 })).toHaveLength(1)
+    expect(on({ image_loss_weight: 1.5 })).toHaveLength(1)
+    expect(on({ image_loss_schedule_start: 0.4 })).toHaveLength(1)
+    expect(on({ image_loss_schedule: 'decay', image_loss_weight: 0.7 })).toHaveLength(1)
+    expect(on({ image_loss_schedule: 'decay', image_loss_weight: 0.1 })).toEqual([])
+    expect(on({ image_loss_schedule: 'ramp', image_loss_weight: 0.3 })).toEqual([])
+    expect(
+      on({ image_loss_schedule: 'ramp', image_loss_weight: 0.3, image_loss_schedule_start: 0.5 }),
+    ).toHaveLength(1)
+    expect(on({ image_loss_chamfer: 0 })).toHaveLength(1)
+    expect(on({ image_loss_canny_low: 300 })).toHaveLength(1)
+    expect(on({ image_loss_curve_samples: 6000 })).toHaveLength(1)
   })
 })

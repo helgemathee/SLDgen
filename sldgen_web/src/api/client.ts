@@ -5,6 +5,9 @@ import type {
   CannyPreview,
   FramesResponse,
   Health,
+  ImageLossPreview,
+  LandmarkExtract,
+  CanvasInfo,
   JobDetail,
   JobSummary,
   Lineage,
@@ -162,6 +165,14 @@ export const api = {
 
   cannyPreview: (body: Record<string, unknown>) =>
     request<CannyPreview>('/api/canny/preview', json(body)),
+
+  imageLossPreview: (body: Record<string, unknown>) =>
+    request<ImageLossPreview>('/api/image-loss/preview', json(body)),
+  extractLandmarks: (body: Record<string, unknown>) =>
+    request<LandmarkExtract>('/api/image-loss/landmarks', json(body)),
+  imageLossCanvas: (targetSha256: string) =>
+    request<CanvasInfo>(`/api/image-loss/canvas?target_sha256=${encodeURIComponent(targetSha256)}`),
+  uploadJson: async <T,>(sha256: string) => request<T>(`/api/uploads/${sha256}`),
 
   partitionPreview: (body: Record<string, unknown>) =>
     request<PartitionPreview>('/api/partitions/preview', json(body)),

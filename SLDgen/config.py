@@ -71,6 +71,100 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 
+IMAGE_LOSS_KNOBS = (
+    "image_loss_weight",
+    "image_loss_schedule",
+    "image_loss_schedule_start",
+    "image_loss_chamfer",
+    "image_loss_pyramid",
+    "image_loss_landmark",
+    "image_loss_target",
+    "image_loss_canny_low",
+    "image_loss_canny_high",
+    "image_loss_canny_blur",
+    "image_loss_curve_samples",
+    "image_loss_landmarks",
+)
+
+
+def validate_image_loss(parser, args):
+    """Refuse an unusable --image-loss setup before any model loads.
+
+    Knobs given without the gate are inert and only warned about, not refused:
+    Run again inherits input files, and switching the gate off on a derived job
+    must not make it unlaunchable.
+    """
+    if not args.image_loss:
+        given = [k for k in IMAGE_LOSS_KNOBS if getattr(args, k) != parser.get_default(k)]
+        if given:
+            flags = ", ".join("--" + k.replace("_", "-") for k in given)
+            print(f"Warning: {flags} ignored without --image-loss.", flush=True)
+        return
+
+    if not 0.0 < args.image_loss_weight <= 1.0:
+        parser.error(f"--image-loss-weight must be in (0, 1]; got {args.image_loss_weight}.")
+    start = args.image_loss_schedule_start
+    if start is not None:
+        if not 0.0 <= start <= 1.0:
+            parser.error(f"--image-loss-schedule-start must be in [0, 1]; got {start}.")
+        if args.image_loss_schedule == "constant":
+            parser.error("--image-loss-schedule-start only applies to decay/ramp.")
+    if args.image_loss_schedule in ("decay", "ramp"):
+        from .image_loss import DEFAULT_START
+
+        begin = DEFAULT_START[args.image_loss_schedule] if start is None else start
+        if args.image_loss_schedule == "decay" and not begin > args.image_loss_weight:
+            parser.error(
+                f"decay needs a start above --image-loss-weight; got start {begin} and "
+                f"weight {args.image_loss_weight}."
+            )
+        if args.image_loss_schedule == "ramp" and not begin < args.image_loss_weight:
+            parser.error(
+                f"ramp needs a start below --image-loss-weight; got start {begin} and "
+                f"weight {args.image_loss_weight}."
+            )
+
+    terms = (args.image_loss_chamfer, args.image_loss_pyramid, args.image_loss_landmark)
+    if min(terms) < 0:
+        parser.error("--image-loss-chamfer/-pyramid/-landmark must be >= 0.")
+    if max(terms) <= 0:
+        parser.error("at least one of --image-loss-chamfer/-pyramid/-landmark must be > 0.")
+    if args.image_loss_landmark > 0 and args.image_loss_landmarks is None:
+        parser.error("--image-loss-landmark > 0 needs --image-loss-landmarks.")
+    if args.image_loss_landmarks is not None and not Path(args.image_loss_landmarks).exists():
+        parser.error(f"--image-loss-landmarks file does not exist: {args.image_loss_landmarks}")
+    if args.image_loss_landmark > 0:
+        from .image_loss import load_landmarks
+
+        try:
+            load_landmarks(args.image_loss_landmarks, args.render_size)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    if args.image_loss_target is not None:
+        if not Path(args.image_loss_target).exists():
+            parser.error(f"--image-loss-target file does not exist: {args.image_loss_target}")
+        from .image_loss import load_supplied_target
+
+        try:
+            load_supplied_target(args.image_loss_target, args.render_size)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    if args.image_loss_canny_low >= args.image_loss_canny_high:
+        parser.error(
+            "--image-loss-canny-low must be below --image-loss-canny-high; got "
+            f"{args.image_loss_canny_low} and {args.image_loss_canny_high}."
+        )
+    if args.image_loss_canny_blur < 0:
+        parser.error("--image-loss-canny-blur must be 0 (disabled) or positive.")
+    if not 2 <= args.image_loss_curve_samples <= args.sampling_rate:
+        parser.error(
+            "--image-loss-curve-samples must be between 2 and --sampling-rate "
+            f"({args.sampling_rate}); got {args.image_loss_curve_samples}."
+        )
+
+
 def parse_arguments(custom_args=None):
     parser = argparse.ArgumentParser()
 
@@ -380,6 +474,112 @@ def parse_arguments(custom_args=None):
         ),
     )
 
+    # Image fidelity loss (opt-in). Compares the drawing with the photograph and
+    # blends that gradient with SDS's at a fixed ratio (Spec 6). When --image-loss
+    # is unset nothing in this group runs and every knob below is inert.
+    parser.add_argument(
+        "--image-loss",
+        action="store_true",
+        help=(
+            "Optional. Blend a gradient that pulls the curve toward the target's "
+            "edges into the SDS gradient on the control points, at a fixed share "
+            "(--image-loss-weight) of the SDS gradient's own norm. Writes "
+            "image_loss_target.png and image_loss_log.csv to the output directory. "
+            "If omitted, behavior is identical to upstream."
+        ),
+    )
+    parser.add_argument(
+        "--image-loss-weight",
+        type=float,
+        default=0.2,
+        help=(
+            "Blend weight alpha in (0, 1]: the share of the control-point gradient "
+            "that comes from the image term. With a decay/ramp schedule, the alpha "
+            "the run ends on."
+        ),
+    )
+    parser.add_argument(
+        "--image-loss-schedule",
+        type=str,
+        default="constant",
+        choices=["constant", "decay", "ramp"],
+        help=(
+            "How alpha moves over the run: constant; decay (linear from "
+            "--image-loss-schedule-start down to --image-loss-weight: lock the "
+            "composition early); ramp (linear up to it: pull back late)."
+        ),
+    )
+    parser.add_argument(
+        "--image-loss-schedule-start",
+        type=float,
+        default=None,
+        help="Alpha at epoch 0 for decay/ramp. Defaults: 0.5 for decay, 0.05 for ramp.",
+    )
+    parser.add_argument(
+        "--image-loss-chamfer",
+        type=float,
+        default=1.0,
+        help="Relative weight of the chamfer term (curve -> nearest edge). 0 disables it.",
+    )
+    parser.add_argument(
+        "--image-loss-pyramid",
+        type=float,
+        default=0.0,
+        help="Relative weight of the multi-scale ink-distribution term. 0 disables it.",
+    )
+    parser.add_argument(
+        "--image-loss-landmark",
+        type=float,
+        default=0.0,
+        help=(
+            "Relative weight of the landmark term (anchor -> nearest curve point). "
+            "0 disables it; > 0 needs --image-loss-landmarks."
+        ),
+    )
+    parser.add_argument(
+        "--image-loss-target",
+        type=str,
+        default=None,
+        metavar="PNG",
+        help=(
+            "Optional canvas-space PNG at --render-size: a 0/255 edge map used as "
+            "is, or an image Canny runs over. Omitted: edges are derived in the run "
+            "from the canvas image. Make one with sld_edge_target.py from a "
+            "previous run's input.png, never from the original photograph."
+        ),
+    )
+    parser.add_argument(
+        "--image-loss-canny-low",
+        type=float,
+        default=canny_attract.DEFAULT_LOW,
+        help="Canny low threshold for the derived image-loss edge map.",
+    )
+    parser.add_argument(
+        "--image-loss-canny-high",
+        type=float,
+        default=canny_attract.DEFAULT_HIGH,
+        help="Canny high threshold for the derived image-loss edge map.",
+    )
+    parser.add_argument(
+        "--image-loss-canny-blur",
+        type=int,
+        default=3,
+        help="Gaussian kernel before Canny for the image-loss edge map (odd, 0 disables).",
+    )
+    parser.add_argument(
+        "--image-loss-curve-samples",
+        type=int,
+        default=2000,
+        help="Points taken along the curve for the chamfer and landmark terms.",
+    )
+    parser.add_argument(
+        "--image-loss-landmarks",
+        type=str,
+        default=None,
+        metavar="JSON",
+        help="Canvas-space landmark file from sld_landmarks.py. Needed by --image-loss-landmark.",
+    )
+
     # Init-from-SVG (opt-in). Seed the TSP tour from a provided SVG's points
     # instead of stippling the target image. Pairs with --attract: the partition
     # becomes the starting curve and attraction keeps it aligned as SDS refines.
@@ -559,6 +759,8 @@ def parse_arguments(custom_args=None):
             parser.error("--attract-canny-max-points must be at least 2.")
         if args.attract_canny_blur < 0:
             parser.error("--attract-canny-blur must be 0 (disabled) or positive.")
+
+    validate_image_loss(parser, args)
 
     # Validate the opt-in --init-points feature. Default (None) keeps behavior
     # unchanged. Only meaningful for the TSP initializer.

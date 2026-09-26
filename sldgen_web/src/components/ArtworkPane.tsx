@@ -5,7 +5,14 @@ import { formatBytes } from '../lib/format'
 import { ZOOM_STEP, actualSizeView, fitView, rescaleView, zoomCentered } from '../lib/zoom'
 import { previewSrc } from './JobThumb'
 
-export type ArtworkTab = 'result' | 'preview' | 'input' | 'mask' | 'condition' | 'weight'
+export type ArtworkTab =
+  | 'result'
+  | 'preview'
+  | 'input'
+  | 'mask'
+  | 'condition'
+  | 'weight'
+  | 'edges'
 
 interface Available {
   result: string | null
@@ -14,6 +21,7 @@ interface Available {
   mask: string | null
   condition: string | null
   weight: string | null
+  edges: string | null
 }
 
 export function availableArtwork(job: JobDetail, frameUrl: string | null): Available {
@@ -35,6 +43,9 @@ export function availableArtwork(job: JobDetail, frameUrl: string | null): Avail
     mask: run('mask.png'),
     condition: condition ? fileUrl(job.id, condition.path) : null,
     weight: weight ? fileUrl(job.id, `inputs/${weight.stored_path.split('/').pop()}`) : null,
+    // What --image-loss actually compared against, after the mask: written by
+    // the run whether the map was derived or supplied.
+    edges: run('image_loss_target.png'),
   }
 }
 
@@ -53,7 +64,11 @@ const TAB_LABELS: Record<ArtworkTab, string> = {
   mask: 'Mask',
   condition: 'Condition',
   weight: 'Stipple weight',
+  edges: 'Edge target',
 }
+
+/** Tabs only a few jobs have: hidden rather than shown disabled on the rest. */
+const OPT_IN_TABS: ArtworkTab[] = ['edges']
 
 /**
  * The artwork viewer (Spec 3 SS6.1).
@@ -215,19 +230,21 @@ export function ArtworkPane({
     <div className="panel">
       <div className="panel__head" style={{ padding: '4px 8px 0', background: 'var(--paper-sunk)' }}>
         <div className="tabs" role="tablist">
-          {(Object.keys(TAB_LABELS) as ArtworkTab[]).map((name) => (
-            <button
-              key={name}
-              type="button"
-              role="tab"
-              className="tab"
-              aria-selected={tab === name}
-              disabled={!available[name]}
-              onClick={() => onTab(name)}
-            >
-              {TAB_LABELS[name]}
-            </button>
-          ))}
+          {(Object.keys(TAB_LABELS) as ArtworkTab[])
+            .filter((name) => available[name] || !OPT_IN_TABS.includes(name))
+            .map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                className="tab"
+                aria-selected={tab === name}
+                disabled={!available[name]}
+                onClick={() => onTab(name)}
+              >
+                {TAB_LABELS[name]}
+              </button>
+            ))}
         </div>
       </div>
 

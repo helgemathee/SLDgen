@@ -87,6 +87,22 @@ def parse_args():
     parser.add_argument("--attract-canny-simplify", type=float, default=1.0)
     parser.add_argument("--attract-canny-min-length", type=float, default=12.0)
     parser.add_argument("--attract-canny-max-points", type=int, default=400)
+    # Image fidelity loss (Spec 6). As with Canny attraction, the edge target is
+    # derived by the *real* SLDgen/image_loss.py code, so the file the UI
+    # previews is the file SLDgen writes.
+    parser.add_argument("--image-loss", action="store_true")
+    parser.add_argument("--image-loss-weight", type=float, default=0.2)
+    parser.add_argument("--image-loss-schedule", default="constant")
+    parser.add_argument("--image-loss-schedule-start", type=float, default=None)
+    parser.add_argument("--image-loss-chamfer", type=float, default=1.0)
+    parser.add_argument("--image-loss-pyramid", type=float, default=0.0)
+    parser.add_argument("--image-loss-landmark", type=float, default=0.0)
+    parser.add_argument("--image-loss-target", default=None)
+    parser.add_argument("--image-loss-canny-low", type=float, default=100.0)
+    parser.add_argument("--image-loss-canny-high", type=float, default=200.0)
+    parser.add_argument("--image-loss-canny-blur", type=int, default=3)
+    parser.add_argument("--image-loss-curve-samples", type=int, default=2000)
+    parser.add_argument("--image-loss-landmarks", default=None)
     return parser.parse_known_args()[0]
 
 
@@ -150,6 +166,58 @@ def write_attract_canny(run_dir, args):
     )
     print(f"\tCanny attraction: {describe(stats)}", flush=True)
     return stats
+
+
+def write_image_loss_target(run_dir, args):
+    """The edge target, from the real derivation (or the supplied file)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from PIL import Image
+
+        from SLDgen.image_loss import build_edge_map
+    except ImportError as error:
+        print(f"fake sldgen: --image-loss needs torch/cv2/numpy/PIL ({error})", flush=True)
+        return False
+
+    args.render_size = int(args.render_size)
+    try:
+        edges, source = build_edge_map(
+            args, Image.open(run_dir / "input.png").convert("RGB"), Image.open(run_dir / "mask.png")
+        )
+    except ValueError as error:
+        print(f"fake sldgen: {error}", flush=True)
+        raise SystemExit(2)
+    Image.fromarray(edges).save(run_dir / "image_loss_target.png")
+    print(f"\tImage fidelity loss: {source}: {int((edges > 0).sum())} edge px", flush=True)
+    return True
+
+
+IMAGE_LOSS_COLUMNS = (
+    "epoch,alpha,sds_norm,img_norm,cosine,skipped,loss_sds,loss_img,chamfer,pyramid,landmark"
+)
+
+
+def open_image_loss_log(run_dir, resume_epoch):
+    """Truncate-and-append on resume, as SLDgen/image_loss.py::ImageLossLog does."""
+    path = run_dir / "image_loss_log.csv"
+    kept = []
+    if resume_epoch is not None and path.exists():
+        rows = path.read_text().splitlines()[1:]
+        kept = [row for row in rows if row and int(row.split(",")[0]) <= resume_epoch]
+    handle = open(path, "w")
+    handle.write("\n".join([IMAGE_LOSS_COLUMNS] + kept) + "\n")
+    handle.flush()
+    return handle
+
+
+def image_loss_alpha(args, epoch):
+    if args.image_loss_schedule == "constant":
+        return args.image_loss_weight
+    start = args.image_loss_schedule_start
+    if start is None:
+        start = {"decay": 0.5, "ramp": 0.05}[args.image_loss_schedule]
+    t = epoch / max(args.num_iter - 1, 1)
+    return start + (args.image_loss_weight - start) * t
 
 
 def utcnow():
@@ -222,6 +290,11 @@ def main():
     real_images = write_canvas_images(run_dir, args.target, args.render_size)
     if args.attract_canny and real_images:
         write_attract_canny(run_dir, args)
+    image_log = None
+    if args.image_loss:
+        if real_images:
+            write_image_loss_target(run_dir, args)
+        image_log = open_image_loss_log(run_dir, start_epoch if args.resume else None)
 
     if start_epoch < 0:
         # save_current_step writes the SVG *and* the PNG, at epoch 0 as at every
@@ -247,6 +320,14 @@ def main():
             code = int(forced_exit if forced_exit is not None else 1)
             print(f"\nfake sldgen: failing at epoch {epoch} with exit code {code}", flush=True)
             return code
+
+        if image_log is not None:
+            chamfer = 10.0 / (1 + epoch)
+            image_log.write(
+                f"{epoch},{image_loss_alpha(args, epoch):.7g},1,0.5,0.1,0,1,{chamfer:.7g},"
+                f"{chamfer:.7g},,\n"
+            )
+            image_log.flush()
 
         rate = (epoch - start_epoch) / max(time.time() - started, 1e-9)
         if epoch % args.save_interval == 0 and epoch > 0:

@@ -74,6 +74,9 @@ the root.
 | `SLDGEN_PYTHON` | `/home/helge/miniforge3/envs/sldgen/bin/python` | interpreter that runs a segment |
 | `SLDGEN_SCRIPT` | `<repo>/sldgen.py` | the script a segment runs |
 | `SLDGEN_PARTITION_SCRIPT` | `<repo>/sld_partition.py` | invoked synchronously by the API |
+| `SLDGEN_CANNY_SCRIPT` | `<repo>/sld_canny_svg.py` | Canny-attraction preview, run by the API |
+| `SLDGEN_EDGE_SCRIPT` | `<repo>/sld_edge_target.py` | image-loss edge-target preview, run by the API |
+| `SLDGEN_LANDMARK_SCRIPT` | `<repo>/sld_landmarks.py` | image-loss landmark extraction, run by the API |
 | `SLDGEN_POLL_INTERVAL` | `1.0` | how often the worker reads `state.json` |
 | `SLDGEN_CLAIM_INTERVAL` | `2.0` | how long the worker sleeps on an empty queue |
 | `SLDGEN_GRACE_SECONDS` | `120` | SIGTERM → SIGKILL grace for a segment |

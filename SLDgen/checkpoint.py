@@ -85,6 +85,23 @@ STRUCTURAL_FIELDS = (
     "attract_canny_simplify",
     "attract_canny_min_length",
     "attract_canny_max_points",
+    # --image-loss runs every step, so unlike the init-only inputs its two files
+    # stay fingerprinted (as path strings, like avoid/attract) and resume
+    # segments keep passing them. Targets are rebuilt deterministically from the
+    # same bytes and alpha is a function of the absolute epoch.
+    "image_loss",
+    "image_loss_weight",
+    "image_loss_schedule",
+    "image_loss_schedule_start",
+    "image_loss_chamfer",
+    "image_loss_pyramid",
+    "image_loss_landmark",
+    "image_loss_target",
+    "image_loss_canny_low",
+    "image_loss_canny_high",
+    "image_loss_canny_blur",
+    "image_loss_curve_samples",
+    "image_loss_landmarks",
     "repulsion_loss_weight",
     "sparse_loss_weight",
     "sparse_loss_type",

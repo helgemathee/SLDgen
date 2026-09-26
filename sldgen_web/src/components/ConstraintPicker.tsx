@@ -4,6 +4,7 @@ import type { JobSummary, Partition } from '../api/types'
 import type { InputRef, OptionalField } from '../lib/formstate'
 import { jobLabel } from '../lib/format'
 import { SPEC_BY_NAME } from '../lib/params'
+import { paramTooltip } from '../lib/help'
 import { refKey, refLabel, searchSources, uploadRef } from '../lib/sources'
 import { FramePicker } from './FramePicker'
 import { JobThumb } from './JobThumb'
@@ -83,10 +84,11 @@ export function ConstraintPicker({
         type="checkbox"
         checked={enabled}
         aria-label={`Use ${spec.label}`}
+        title={paramTooltip(spec)}
         onChange={(event) => onChange({ enabled: event.target.checked })}
       />
       <div className="optional__body">
-        <strong>{spec.label}</strong>
+        <strong title={paramTooltip(spec)}>{spec.label}</strong>
         <div className="note">
           {role === 'stipple_weight'
             ? 'A grayscale image. The prep canvas produces one for you in the guide and control modes.'

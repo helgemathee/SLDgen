@@ -85,6 +85,7 @@ make
 cd ~/SLDgen
 pip install -r requirements.txt easydict     # easydict is imported but missing from requirements.txt
 pip install "transformers>=4.54.1,<5"        # transformers 5.x breaks diffusers 0.34 (FLAX_WEIGHTS_NAME)
+pip install "mediapipe==0.10.21" "numpy==1.26.4"   # sld_landmarks.py (Spec 6); 1.x needs numpy 2 and drops Face Mesh
 # keep numpy <2 (1.26.4) and torch 2.12.1+cu130. Ignore README's torch==2.3.1 cu121 step.
 ```
 

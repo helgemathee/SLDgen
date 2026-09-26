@@ -88,6 +88,26 @@ PARAM_SPECS = (
     ParamSpec("attract_canny_simplify", "--attract-canny-simplify", "float", STRUCTURAL, 1.0),
     ParamSpec("attract_canny_min_length", "--attract-canny-min-length", "float", STRUCTURAL, 12.0),
     ParamSpec("attract_canny_max_points", "--attract-canny-max-points", "int", STRUCTURAL, 400),
+    #: Image fidelity loss (Spec 6). A gate plus knobs that are inert without
+    #: it, like attract_canny. The two paths are input roles (image_loss_target,
+    #: image_loss_landmarks), filled by create_job and never set directly.
+    ParamSpec("image_loss", "--image-loss", "true_flag", STRUCTURAL, False),
+    ParamSpec("image_loss_weight", "--image-loss-weight", "float", STRUCTURAL, 0.2),
+    ParamSpec("image_loss_schedule", "--image-loss-schedule", "str", STRUCTURAL, "constant"),
+    ParamSpec(
+        "image_loss_schedule_start", "--image-loss-schedule-start", "float", STRUCTURAL, None
+    ),
+    ParamSpec("image_loss_chamfer", "--image-loss-chamfer", "float", STRUCTURAL, 1.0),
+    ParamSpec("image_loss_pyramid", "--image-loss-pyramid", "float", STRUCTURAL, 0.0),
+    ParamSpec("image_loss_landmark", "--image-loss-landmark", "float", STRUCTURAL, 0.0),
+    ParamSpec("image_loss_target", "--image-loss-target", "path", STRUCTURAL, None),
+    ParamSpec("image_loss_canny_low", "--image-loss-canny-low", "float", STRUCTURAL, 100.0),
+    ParamSpec("image_loss_canny_high", "--image-loss-canny-high", "float", STRUCTURAL, 200.0),
+    ParamSpec("image_loss_canny_blur", "--image-loss-canny-blur", "int", STRUCTURAL, 3),
+    ParamSpec(
+        "image_loss_curve_samples", "--image-loss-curve-samples", "int", STRUCTURAL, 2000
+    ),
+    ParamSpec("image_loss_landmarks", "--image-loss-landmarks", "path", STRUCTURAL, None),
     ParamSpec("init_points", "--init-points", "path", STRUCTURAL, None),
     ParamSpec("stipple_weight", "--stipple-weight", "path", STRUCTURAL, None),
     ParamSpec("stipple_weight_mode", "--stipple-weight-mode", "str", STRUCTURAL, "multiply"),
@@ -229,7 +249,52 @@ def validate_params(params):
         if params["attract_canny_blur"] < 0:
             raise ParamError("attract_canny_blur must be 0 (disabled) or positive")
 
+    if params["image_loss"]:
+        _validate_image_loss(params)
+
     return params
+
+
+#: Where decay/ramp start when image_loss_schedule_start is unset. Mirrors
+#: SLDgen/image_loss.py, which the API venv cannot import.
+IMAGE_LOSS_DEFAULT_START = {"decay": 0.5, "ramp": 0.05}
+
+
+def _validate_image_loss(params):
+    """Mirrors SLDgen/config.py::validate_image_loss, minus the file checks.
+
+    The two files are input roles resolved at creation; their size is checked by
+    the run against --render-size, which surfaces as an ordinary exit-2 failure.
+    """
+    weight = params["image_loss_weight"]
+    if not 0.0 < weight <= 1.0:
+        raise ParamError("image_loss_weight must be in (0, 1]")
+    schedule = params["image_loss_schedule"]
+    if schedule not in ("constant", "decay", "ramp"):
+        raise ParamError("image_loss_schedule must be 'constant', 'decay' or 'ramp'")
+    start = params["image_loss_schedule_start"]
+    if start is not None:
+        if not 0.0 <= start <= 1.0:
+            raise ParamError("image_loss_schedule_start must be in [0, 1]")
+        if schedule == "constant":
+            raise ParamError("image_loss_schedule_start only applies to decay/ramp")
+    if schedule != "constant":
+        begin = IMAGE_LOSS_DEFAULT_START[schedule] if start is None else start
+        if schedule == "decay" and not begin > weight:
+            raise ParamError("decay needs image_loss_schedule_start above image_loss_weight")
+        if schedule == "ramp" and not begin < weight:
+            raise ParamError("ramp needs image_loss_schedule_start below image_loss_weight")
+    terms = [params[f"image_loss_{t}"] for t in ("chamfer", "pyramid", "landmark")]
+    if min(terms) < 0:
+        raise ParamError("image_loss_chamfer/pyramid/landmark must be >= 0")
+    if max(terms) <= 0:
+        raise ParamError("at least one of image_loss_chamfer/pyramid/landmark must be > 0")
+    if params["image_loss_canny_low"] >= params["image_loss_canny_high"]:
+        raise ParamError("image_loss_canny_low must be below image_loss_canny_high")
+    if params["image_loss_canny_blur"] < 0:
+        raise ParamError("image_loss_canny_blur must be 0 (disabled) or positive")
+    if not 2 <= params["image_loss_curve_samples"] <= params["sampling_rate"]:
+        raise ParamError("image_loss_curve_samples must be between 2 and sampling_rate")
 
 
 def split_by_group(params):

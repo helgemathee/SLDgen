@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { CannyPreview, ParamValue, Params } from '../api/types'
 import { SPEC_BY_NAME } from '../lib/params'
+import { paramTooltip } from '../lib/help'
 
 const KNOBS = [
   'attract_canny_low',
@@ -87,17 +88,20 @@ export function CannyPanel({
         type="checkbox"
         checked={enabled}
         aria-label="Use Canny attraction"
+        title={paramTooltip(SPEC_BY_NAME.attract_canny)}
         onChange={(event) => onChange('attract_canny', event.target.checked)}
       />
       <div className="optional__body">
-        <strong>{SPEC_BY_NAME.attract_canny.label}</strong>
+        <strong title={paramTooltip(SPEC_BY_NAME.attract_canny)}>
+          {SPEC_BY_NAME.attract_canny.label}
+        </strong>
         <div className="note">{SPEC_BY_NAME.attract_canny.hint}</div>
 
         {enabled && (
           <>
             <div className="grid-knobs">
               {KNOBS.map((name) => (
-                <div className="field" key={name}>
+                <div className="field" key={name} title={paramTooltip(SPEC_BY_NAME[name])}>
                   <label htmlFor={`canny-${name}`}>{SPEC_BY_NAME[name].label}</label>
                   <input
                     id={`canny-${name}`}

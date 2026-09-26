@@ -77,7 +77,14 @@ export interface Segment {
 export interface JobInput {
   id: number
   job_id: string
-  role: 'avoid' | 'attract' | 'init_points' | 'stipple_weight' | 'labels'
+  role:
+    | 'avoid'
+    | 'attract'
+    | 'init_points'
+    | 'stipple_weight'
+    | 'image_loss_target'
+    | 'image_loss_landmarks'
+    | 'labels'
   ordinal: number
   source_kind: 'job' | 'partition' | 'upload'
   source_job_id: string | null
@@ -206,6 +213,45 @@ export interface CannyPreview {
   bytes: number
   svg_url: string
   image_url: string
+}
+
+/**
+ * The edge target `--image-loss` would use (Spec 6 SS10.1). Stored as an upload,
+ * so `sha256` attaches it as the `image_loss_target` input directly.
+ * `derived_equivalent` means the run derives this exact map by itself.
+ */
+export interface ImageLossPreview {
+  source_job_id: string
+  sha256: string
+  edge_pixels: number | null
+  derived_equivalent: boolean
+  edge_url: string
+  image_url: string
+  stdout: string
+}
+
+/** Landmarks extracted from a previous run's canvas (Spec 6 SS10.2, Spec 7 SS5). */
+export interface LandmarkExtract {
+  source_job_id: string
+  sha256: string
+  count: number
+  landmarks: { name: string; xy: [number, number]; weight: number; source?: string }[]
+  image_url: string
+  image_size: [number, number]
+  view?: {
+    kind: 'frontal' | 'turned' | 'profile' | null
+    yaw: number | null
+    method: 'mesh' | 'pose'
+    facing: 'left' | 'right' | null
+  } | null
+  dropped?: string[]
+}
+
+/** The canvas of the latest run of an image, for the landmark editor (Spec 7 SS5). */
+export interface CanvasInfo {
+  source_job_id: string
+  image_url: string
+  image_size: [number, number]
 }
 
 export interface PartitionPreview {

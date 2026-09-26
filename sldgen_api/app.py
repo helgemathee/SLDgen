@@ -35,6 +35,7 @@ from sldgen_service.params import (
 from sldgen_service.store import Store, StoreError
 
 from . import canny as canny_utils
+from . import image_loss as image_loss_utils
 from . import partitions as partition_utils
 from .streaming import sse, stream_zip
 
@@ -1010,6 +1011,88 @@ def create_app(config=None):
         except canny_utils.CannyError as exc:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path, media_type="image/svg+xml")
+
+    # -- image fidelity loss previews (Spec 6) ------------------------------
+
+    def image_loss_source(body):
+        """The run whose canvas a preview reads, by id or newest on the target."""
+        source_job_id = body.get("source_job_id")
+        if source_job_id:
+            require_job(source_job_id)
+            return source_job_id
+        target = body.get("target_sha256")
+        if not target:
+            raise HTTPException(400, "source_job_id or target_sha256 is required")
+        source_job_id = canny_utils.find_source_job(store, config, target)
+        if source_job_id is None:
+            raise HTTPException(
+                404,
+                "no previous run of this image has reached target preprocessing, so "
+                "there is no canvas to preview against yet. Run this image once first; "
+                "the run derives its own edge map in the meantime.",
+            )
+        return source_job_id
+
+    @app.post("/api/image-loss/preview")
+    def image_loss_preview(body: dict = Body(...)):
+        """The edge target --image-loss would use, stored as an upload.
+
+        ``derived_equivalent`` says whether the run would derive this exact map
+        itself (only low/high/blur set), in which case nothing need be attached.
+        """
+        source_job_id = image_loss_source(body)
+        try:
+            result = image_loss_utils.run_edge_preview(
+                config, source_job_id, dict(body.get("params") or {})
+            )
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            **result,
+            "edge_url": f"/api/image-loss/preview/{source_job_id}.png",
+            "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png",
+        }
+
+    @app.post("/api/image-loss/landmarks")
+    def image_loss_landmarks(body: dict = Body(...)):
+        """Face landmarks from a previous run's canvas, stored as an upload.
+
+        422 when the image has no face or the host has no MediaPipe: the
+        request was well formed, the input cannot serve it.
+        """
+        source_job_id = image_loss_source(body)
+        try:
+            result = image_loss_utils.run_landmarks(
+                config,
+                source_job_id,
+                str(body.get("preset") or "portrait"),
+                box=body.get("box"),
+            )
+        except image_loss_utils.LandmarkError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {**result, "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png"}
+
+    @app.get("/api/image-loss/canvas")
+    def image_loss_canvas(target_sha256: str = "", source_job_id: str = ""):
+        """The canvas the landmark editor places points on (Spec 7 SS5)."""
+        source = image_loss_source(
+            {"target_sha256": target_sha256, "source_job_id": source_job_id}
+        )
+        try:
+            result = image_loss_utils.canvas_info(config, source)
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {**result, "image_url": f"/api/jobs/{source}/files/target/run/input.png"}
+
+    @app.get("/api/image-loss/preview/{source_job_id}.png")
+    def image_loss_preview_png(source_job_id: str):
+        try:
+            path = image_loss_utils.edge_preview_png(config, source_job_id)
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return FileResponse(path, media_type="image/png")
 
     # -- partitions ---------------------------------------------------------
 
