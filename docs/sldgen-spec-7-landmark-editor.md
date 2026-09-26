@@ -237,4 +237,54 @@ shown read-only (unchanged from Spec 6).
 
 ## 9. As built
 
-(filled in on completion)
+Commits `a2413bc` (spec), `bc75ef3` (detection), `6d07dc9` (API), `dc7dd9d`
+(editor), 2026-09-26. Not pushed.
+
+### 9.1 Measured on real images (CPU, ~1.5 s per detection)
+
+| image | result |
+|---|---|
+| frontal portraits (5 jobs) | mesh, yaw −5…+9°, 21 points, nothing dropped |
+| three-quarter (`hendrick2`) | mesh, turned −32°, 17 points; far cheek, jaw, eye outer, brow outer dropped |
+| ~60° (Commons, Roosevelt) | mesh, profile −48°; far side dropped, near eye/brow/nostril/mouth correct |
+| near-profiles (Commons ×2) | mesh, profile −51…−53°; near-side points usable; with a mask, nose tip, subnasale, upper lip, nasion, brow ridge from the outline |
+| full profile (`Gesa`) | mesh finds nothing; Pose + mask: near eye (3 points), mouth corner, and nose tip, subnasale, upper lip, stomion, lower lip, chin front — all on the outline where they belong |
+| profile *drawing* (Commons) | mesh nothing; Pose misplaces the eye/mouth onto the collar — a known limit of Pose on engravings. The editor is the remedy. |
+
+Detect-in-box on the three-quarter view agrees with whole-canvas detection to
+2.6 px mean (7.4 px max): the upscaled crop is, if anything, sharper.
+
+### 9.2 Deviations from the plan
+
+* **Silhouette extrema by zigzag, not fixed bands.** Profile features on a
+  512 canvas are 1–2 px deep; band argmax/argmin with edge rules missed most of
+  them. A zigzag walk from the nose tip (reversal threshold `max(0.9 px,
+  0.015 s)`) down to the neck — detected as a backward jump of a quarter face —
+  and up to just above the eye finds them in order, and leaves out what the
+  outline does not show (Gesa's flat forehead has no nasion; none is invented).
+* **Only the mask blob holding the eye is used** (`head_component`): specks in
+  front of the face otherwise became the "nose tip".
+* **Pose yaw estimate** from eye separation / eye-to-mouth height (≈1.15
+  frontal): coarse, and reported as such; it decides culling and whether the
+  silhouette is read.
+* **The editor stays mounted on the Edge map tab** (hidden), so a debounced save
+  in flight is never lost; unmounting would have left submission blocked.
+* **Canvas fallback**: if `/api/image-loss/canvas` is unavailable (an API
+  started before this change), the editor uses the edge preview's canvas.
+* The per-point turn limits (§4.3) were chosen from the measured three-quarter
+  and ~60° views; they are a table, easy to retune.
+
+### 9.3 Tests
+
+`test_landmarks_geom.py` 41/41 (CPU, no MediaPipe); `test_service_image_loss.py`
+54/54 including real Face Mesh on firefighter; `test_image_loss_geom.py` all
+pass; `test_service_web.py` all pass; web vitest 213/213 (17 new in
+`landmarks.test.ts`). The editor itself was not exercised in a browser (headless
+host) — pending the user's check.
+
+### 9.4 Operational
+
+The API must be restarted to serve the new endpoint and parameters
+(`./stop.sh && ./start.sh`; note this also stops the worker, so wait for a
+running job or accept its checkpoint/resume). The web bundle is rebuilt; a page
+reload picks it up.
