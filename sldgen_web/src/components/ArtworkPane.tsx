@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fileUrl } from '../api/client'
 import type { JobDetail } from '../api/types'
 import { formatBytes } from '../lib/format'
+import { dotRadius, lineIsValid, parseFile, type EditorLine, type EditorPoint } from '../lib/landmarks'
+import { canOverlay, overlayStyle, withViewBox, type OverlayBlend } from '../lib/overlay'
 import { ZOOM_STEP, actualSizeView, fitView, rescaleView, zoomCentered } from '../lib/zoom'
 import { previewSrc } from './JobThumb'
 
@@ -13,6 +15,7 @@ export type ArtworkTab =
   | 'condition'
   | 'weight'
   | 'edges'
+  | 'landmarks'
 
 interface Available {
   result: string | null
@@ -22,6 +25,8 @@ interface Available {
   condition: string | null
   weight: string | null
   edges: string | null
+  /** The landmark JSON the run was given (an input, like the weight map). */
+  landmarks: string | null
 }
 
 export function availableArtwork(job: JobDetail, frameUrl: string | null): Available {
@@ -36,16 +41,20 @@ export function availableArtwork(job: JobDetail, frameUrl: string | null): Avail
   // this times the RMBG mask, and that product is never written to disk -- the
   // Mask tab next to it is the other half.
   const weight = job.inputs.find((input) => input.role === 'stipple_weight')
+  const landmarks = job.inputs.find((input) => input.role === 'image_loss_landmarks')
+  const inputUrl = (input: { stored_path: string }) =>
+    fileUrl(job.id, `inputs/${input.stored_path.split('/').pop()}`)
   return {
     result: run('final_sld.svg'),
     preview: frameUrl ?? (job.current_epoch > 0 ? previewSrc(job) : null),
     input: run('input.png'),
     mask: run('mask.png'),
     condition: condition ? fileUrl(job.id, condition.path) : null,
-    weight: weight ? fileUrl(job.id, `inputs/${weight.stored_path.split('/').pop()}`) : null,
+    weight: weight ? inputUrl(weight) : null,
     // What --image-loss actually compared against, after the mask: written by
     // the run whether the map was derived or supplied.
     edges: run('image_loss_target.png'),
+    landmarks: landmarks ? inputUrl(landmarks) : null,
   }
 }
 
@@ -65,10 +74,11 @@ const TAB_LABELS: Record<ArtworkTab, string> = {
   condition: 'Condition',
   weight: 'Stipple weight',
   edges: 'Edge target',
+  landmarks: 'Landmarks',
 }
 
 /** Tabs only a few jobs have: hidden rather than shown disabled on the rest. */
-const OPT_IN_TABS: ArtworkTab[] = ['edges']
+const OPT_IN_TABS: ArtworkTab[] = ['edges', 'landmarks']
 
 /**
  * The artwork viewer (Spec 3 SS6.1).
@@ -97,6 +107,12 @@ export function ArtworkPane({
   const [strokeBoost, setStrokeBoost] = useState(false)
   const [svgMarkup, setSvgMarkup] = useState<string | null>(null)
   const [svgStats, setSvgStats] = useState<{ length: number; segments: number } | null>(null)
+  const [landmarkFile, setLandmarkFile] = useState<LandmarkFile | null>(null)
+  // The current tab drawn over the input, to judge how well it matches. Shared
+  // by all tabs, like the view: flipping tabs with it on compares each in turn.
+  const [overlay, setOverlay] = useState(false)
+  const [overlayOpacity, setOverlayOpacity] = useState(0.5)
+  const [overlayBlend, setOverlayBlend] = useState<OverlayBlend>('normal')
   const container = useRef<HTMLDivElement>(null)
   const stage = useRef<HTMLDivElement>(null)
   const origin = useRef({ x: 0, y: 0, viewX: 0, viewY: 0 })
@@ -110,6 +126,7 @@ export function ArtworkPane({
   const lastContent = useRef<{ width: number; height: number } | null>(null)
 
   const url = available[tab]
+  const overlaid = overlay && canOverlay(tab, Boolean(available.input))
 
   /**
    * The untransformed size of whatever is on the stage, and of the viewport.
@@ -202,7 +219,27 @@ export function ArtworkPane({
     if (syncContent()) return
     const frame = requestAnimationFrame(syncContent)
     return () => cancelAnimationFrame(frame)
-  }, [syncContent, tab, url, svgMarkup])
+  }, [syncContent, tab, url, svgMarkup, landmarkFile, overlaid])
+
+  // The landmarks the run was given, drawn on the canvas they were placed on.
+  useEffect(() => {
+    if (tab !== 'landmarks' || !available.landmarks) {
+      setLandmarkFile(null)
+      return
+    }
+    let cancelled = false
+    fetch(available.landmarks)
+      .then((response) => response.json())
+      .then((payload) => {
+        if (cancelled) return
+        const parsed = parseFile(payload)
+        setLandmarkFile(typeof parsed === 'string' ? { error: parsed } : parsed)
+      })
+      .catch((error) => !cancelled && setLandmarkFile({ error: String(error) }))
+    return () => {
+      cancelled = true
+    }
+  }, [tab, available.landmarks])
 
   // The result is inlined rather than put in an <img> so it can be zoomed
   // without resampling and so its geometry can be measured (SS6.1).
@@ -274,28 +311,55 @@ export function ArtworkPane({
           className="artwork__stage"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
         >
-          {tab === 'result' && svgMarkup ? (
-            <div
-              // eslint-disable-next-line react/no-danger -- our own API, our own file
-              dangerouslySetInnerHTML={{ __html: svgMarkup }}
-              style={
-                strokeBoost
-                  ? ({ ['--boost' as string]: '1', strokeWidth: 2 } as React.CSSProperties)
-                  : undefined
-              }
-              className={strokeBoost ? 'svg-boost' : undefined}
-            />
-          ) : url ? (
-            <img
-              src={url}
-              alt={TAB_LABELS[tab]}
-              // An image has no size until it decodes, so both the opening fit
-              // and the framing carried over from the last tab wait for this
-              // rather than for React.
-              onLoad={syncContent}
-            />
-          ) : null}
+          {(() => {
+            const top =
+              tab === 'landmarks' ? (
+                landmarkFile && !('error' in landmarkFile) ? (
+                  <LandmarkOverlay file={landmarkFile} imageUrl={available.input} />
+                ) : null
+              ) : tab === 'result' && svgMarkup ? (
+                <div
+                  // eslint-disable-next-line react/no-danger -- our own API, our own file
+                  dangerouslySetInnerHTML={{ __html: overlaid ? withViewBox(svgMarkup) : svgMarkup }}
+                  style={
+                    strokeBoost
+                      ? ({ ['--boost' as string]: '1', strokeWidth: 2 } as React.CSSProperties)
+                      : undefined
+                  }
+                  className={strokeBoost ? 'svg-boost' : undefined}
+                />
+              ) : url ? (
+                <img
+                  src={url}
+                  alt={TAB_LABELS[tab]}
+                  // An image has no size until it decodes, so both the opening fit
+                  // and the framing carried over from the last tab wait for this
+                  // rather than for React.
+                  onLoad={syncContent}
+                />
+              ) : null
+            if (!overlaid || !top || !available.input) return top
+            // The input sets the size; the tab is stretched over it (every
+            // canvas-space artefact is drawn at the input's size or a multiple).
+            return (
+              <div className="artwork__stack">
+                <img src={available.input} alt="Input" onLoad={syncContent} />
+                <div
+                  className="artwork__overlay"
+                  style={overlayStyle(overlayOpacity, overlayBlend)}
+                >
+                  {top}
+                </div>
+              </div>
+            )
+          })()}
         </div>
+
+        {tab === 'landmarks' && landmarkFile && 'error' in landmarkFile && (
+          <div className="empty" style={{ position: 'absolute', inset: 0 }}>
+            <span className="muted">The landmark file could not be read: {landmarkFile.error}</span>
+          </div>
+        )}
 
         {!url && (
           <div className="empty" style={{ position: 'absolute', inset: 0 }}>
@@ -353,6 +417,43 @@ export function ArtworkPane({
           >
             bg
           </button>
+          {canOverlay(tab, Boolean(available.input)) && (
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              aria-pressed={overlay}
+              onClick={() => setOverlay((value) => !value)}
+              title="Draw this over the input, to see how well it lines up"
+            >
+              overlay
+            </button>
+          )}
+          {overlaid && (
+            <>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={overlayOpacity}
+                onChange={(event) => setOverlayOpacity(Number(event.target.value))}
+                onPointerDown={(event) => event.stopPropagation()}
+                aria-label="Overlay opacity"
+                title={`Overlay opacity ${Math.round(overlayOpacity * 100)}%`}
+                style={{ width: 70 }}
+              />
+              <span>{Math.round(overlayOpacity * 100)}%</span>
+              <button
+                type="button"
+                className="btn btn--small btn--ghost"
+                aria-pressed={overlayBlend === 'multiply'}
+                onClick={() => setOverlayBlend((value) => (value === 'multiply' ? 'normal' : 'multiply'))}
+                title="Multiply: white turns transparent, so only the lines (or dark areas) sit on the input"
+              >
+                multiply
+              </button>
+            </>
+          )}
           {tab === 'result' && (
             <button
               type="button"
@@ -366,6 +467,19 @@ export function ArtworkPane({
           )}
         </div>
       </div>
+
+      {tab === 'landmarks' && landmarkFile && !('error' in landmarkFile) && (
+        <div className="panel__body mono" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <span>{landmarkFile.points.length} landmarks</span>
+          {landmarkFile.lines.length > 0 && <span>{landmarkFile.lines.length} lines</span>}
+          <span className="note">Dot size is weight; hover a dot for its name.</span>
+          {available.landmarks && (
+            <a href={available.landmarks} download>
+              download JSON
+            </a>
+          )}
+        </div>
+      )}
 
       {tab === 'result' && svgStats && (
         <div className="panel__body mono" style={{ display: 'flex', gap: 16 }}>
@@ -398,6 +512,65 @@ export function ArtworkPane({
         </div>
       )}
     </div>
+  )
+}
+
+type LandmarkFile =
+  | { points: EditorPoint[]; lines: EditorLine[]; imageSize: [number, number] }
+  | { error: string }
+
+/**
+ * A job's landmark file on the canvas it was placed on: the input under the
+ * points and lines, at the canvas's own pixel size (so the stage measures it
+ * like an image and the shared view carries over from the other tabs).
+ */
+function LandmarkOverlay({
+  file,
+  imageUrl,
+}: {
+  file: { points: EditorPoint[]; lines: EditorLine[]; imageSize: [number, number] }
+  imageUrl: string | null
+}) {
+  const [width, height] = file.imageSize
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ display: 'block' }}
+      role="img"
+      aria-label={`${file.points.length} landmarks`}
+    >
+      {imageUrl ? (
+        <image href={imageUrl} x={0} y={0} width={width} height={height} />
+      ) : (
+        <rect width={width} height={height} fill="var(--paper)" />
+      )}
+      {file.lines.filter(lineIsValid).map((line) => (
+        <path
+          key={line.id}
+          className="lm-line lm-line--view"
+          d={`M${line.xy.map(([x, y]) => `${x},${y}`).join('L')}${line.closed && line.xy.length > 2 ? 'Z' : ''}`}
+          strokeWidth={1.5}
+        >
+          <title>{`${line.name} · weight ${line.weight}`}</title>
+        </path>
+      ))}
+      {file.points.map((point) =>
+        point.xy ? (
+          <circle
+            key={point.id}
+            className={`lm-dot lm-dot--${point.source}${point.edited ? ' lm-dot--edited' : ''}`}
+            cx={point.xy[0]}
+            cy={point.xy[1]}
+            r={dotRadius(point.weight)}
+            strokeWidth={1}
+          >
+            <title>{`${point.name} · weight ${point.weight} · ${point.source}`}</title>
+          </circle>
+        ) : null,
+      )}
+    </svg>
   )
 }
 

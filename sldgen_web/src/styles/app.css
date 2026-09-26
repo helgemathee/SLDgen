@@ -1593,6 +1593,34 @@ a {
   background: var(--st-waiting);
 }
 
+.lm-line--view {
+  cursor: default;
+}
+
+/* The artwork pane's overlay: the input sets the box, the tab is stretched on top. */
+.artwork__stack {
+  position: relative;
+  display: inline-block;
+}
+
+.artwork__stack > img {
+  display: block;
+}
+
+.artwork__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.artwork__overlay > img,
+.artwork__overlay > div,
+.artwork__overlay > div > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .lm-editor__lines {
   border-top: 2px solid var(--rule);
 }
