@@ -1063,13 +1063,28 @@ def create_app(config=None):
         source_job_id = image_loss_source(body)
         try:
             result = image_loss_utils.run_landmarks(
-                config, source_job_id, str(body.get("preset") or "portrait")
+                config,
+                source_job_id,
+                str(body.get("preset") or "portrait"),
+                box=body.get("box"),
             )
         except image_loss_utils.LandmarkError as exc:
             raise HTTPException(422, str(exc)) from exc
         except image_loss_utils.ImageLossError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {**result, "image_url": f"/api/jobs/{source_job_id}/files/target/run/input.png"}
+
+    @app.get("/api/image-loss/canvas")
+    def image_loss_canvas(target_sha256: str = "", source_job_id: str = ""):
+        """The canvas the landmark editor places points on (Spec 7 SS5)."""
+        source = image_loss_source(
+            {"target_sha256": target_sha256, "source_job_id": source_job_id}
+        )
+        try:
+            result = image_loss_utils.canvas_info(config, source)
+        except image_loss_utils.ImageLossError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {**result, "image_url": f"/api/jobs/{source}/files/target/run/input.png"}
 
     @app.get("/api/image-loss/preview/{source_job_id}.png")
     def image_loss_preview_png(source_job_id: str):

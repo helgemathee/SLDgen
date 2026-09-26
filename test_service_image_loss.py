@@ -324,6 +324,28 @@ def test_landmarks(config, source_job_id, target_digest):
     no_face = client.post("/api/image-loss/landmarks", json={"source_job_id": source_job_id})
     check("landmarks/no-face-or-no-mediapipe-422", no_face.status_code == 422, no_face.text[:160])
 
+    bad_box = client.post(
+        "/api/image-loss/landmarks", json={"source_job_id": source_job_id, "box": [10, 10, 5]}
+    )
+    check("landmarks/bad-box-400", bad_box.status_code == 400, bad_box.text[:120])
+    inverted = client.post(
+        "/api/image-loss/landmarks", json={"source_job_id": source_job_id, "box": [50, 50, 10, 90]}
+    )
+    check("landmarks/inverted-box-400", inverted.status_code == 400, inverted.text[:120])
+
+    canvas = client.get("/api/image-loss/canvas", params={"target_sha256": target_digest})
+    body = canvas.json() if canvas.status_code == 200 else {}
+    check(
+        "canvas/found-by-target",
+        canvas.status_code == 200
+        and body.get("source_job_id") == source_job_id
+        and len(body.get("image_size", [])) == 2
+        and body.get("image_url", "").endswith("/target/run/input.png"),
+        canvas.text[:160],
+    )
+    none = client.get("/api/image-loss/canvas", params={"target_sha256": "0" * 64})
+    check("canvas/no-run-404", none.status_code == 404, str(none.status_code))
+
     if not has_mediapipe(str(config.sldgen_python)):
         print("  (MediaPipe missing in the conda interpreter: skipping the face case)")
         return
@@ -346,6 +368,21 @@ def test_landmarks(config, source_job_id, target_digest):
         body["count"] >= 19 and body["image_size"] == [512, 512]
         and {"left_eye_outer", "mouth_left", "chin"} <= {p["name"] for p in body["landmarks"]},
         f"{body['count']} landmarks",
+    )
+    check(
+        "landmarks/view-reported",
+        (body.get("view") or {}).get("method") == "mesh" and isinstance(body.get("dropped"), list),
+        str(body.get("view")),
+    )
+    check("landmarks/mask-forwarded", "--mask" in body["argv"], " ".join(body["argv"][-4:]))
+    boxed = client.post(
+        "/api/image-loss/landmarks",
+        json={"target_sha256": face_sha, "box": [0, 0, 512, 512]},
+    )
+    check(
+        "landmarks/box-forwarded",
+        boxed.status_code == 200 and "--box" in boxed.json()["argv"],
+        boxed.text[:160],
     )
     stored = client.get(f"/api/uploads/{body['sha256']}")
     payload = stored.json() if stored.status_code == 200 else {}
