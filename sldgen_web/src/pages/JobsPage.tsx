@@ -147,7 +147,7 @@ export function JobsPage() {
                 : ""}{" "}
               · {formatAgo(job.created_at)}
             </div>
-            {job.resolved_caption && (
+            {scale >= 100 && job.resolved_caption && (
               <div className="note">“{job.resolved_caption}”</div>
             )}
           </div>
