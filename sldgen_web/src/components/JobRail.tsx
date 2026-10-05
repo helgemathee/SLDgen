@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { JobState, JobSummary } from '../api/types'
 import { JOB_STATES } from '../api/types'
 import { ERROR_COPY, formatAgo, formatDuration, jobLabel } from '../lib/format'
@@ -64,6 +64,16 @@ export function filterJobs(
   return filtered
 }
 
+/** The jobs the rail shows, in its order. The Jobs page and j/k use this too,
+ *  so every view of the list agrees with the rail's filters. */
+export function useVisibleJobs(): JobSummary[] {
+  const { jobs, stateFilter, starredOnly, filterText, railSort } = useApp()
+  return useMemo(
+    () => filterJobs(jobs, { states: stateFilter, starredOnly, text: filterText, sort: railSort }),
+    [jobs, stateFilter, starredOnly, filterText, railSort],
+  )
+}
+
 export function JobRail({
   selectedId,
   focusedId,
@@ -71,19 +81,23 @@ export function JobRail({
   selectedId: string | null
   focusedId: string | null
 }) {
-  const { jobs, selection, toggleSelected, stateFilter, setStateFilter, starredOnly, setStarredOnly } =
-    useApp()
-  const states = stateFilter
-  const setStates = setStateFilter
-  const [text, setText] = useState('')
-  const [sort, setSort] = useState<RailSort>('newest')
+  const {
+    jobs,
+    selection,
+    toggleSelected,
+    stateFilter: states,
+    setStateFilter: setStates,
+    starredOnly,
+    setStarredOnly,
+    filterText: text,
+    setFilterText: setText,
+    railSort: sort,
+    setRailSort: setSort,
+  } = useApp()
 
   // Positions over the whole queue, not just the filtered rows.
   const positions = useMemo(() => queuePositions(jobs), [jobs])
-  const visible = useMemo(
-    () => filterJobs(jobs, { states, starredOnly, text, sort }),
-    [jobs, states, starredOnly, text, sort],
-  )
+  const visible = useVisibleJobs()
 
   const toggleState = (state: JobState) => {
     const next = new Set(states)

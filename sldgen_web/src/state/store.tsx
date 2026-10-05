@@ -12,6 +12,7 @@ import { api } from '../api/client'
 import { clampPriority } from '../lib/queue'
 import { subscribe, type ConnectionState } from '../api/stream'
 import type { DiskReport, Health, JobState, JobSummary, JobsEvent } from '../api/types'
+import type { RailSort } from '../components/JobRail'
 
 interface AppState {
   jobs: JobSummary[]
@@ -26,6 +27,12 @@ interface AppState {
   /** The rail's ★ chip: show only starred jobs. Combines with the states. */
   starredOnly: boolean
   setStarredOnly: (value: boolean) => void
+  /** The rail's text filter and sort order. Lifted here so the Jobs page
+   *  shows the same set, in the same order, as the rail. */
+  filterText: string
+  setFilterText: (text: string) => void
+  railSort: RailSort
+  setRailSort: (sort: RailSort) => void
   /** Star or unstar a job, optimistically, from wherever it is drawn. */
   toggleStar: (id: string) => void
   /** Set jobs' queue priority (0 = default; higher runs sooner). Optimistic. */
@@ -59,6 +66,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selection, setSelection] = useState<string[]>([])
   const [stateFilter, setStateFilter] = useState<Set<JobState>>(() => new Set())
   const [starredOnly, setStarredOnly] = useState(false)
+  const [filterText, setFilterText] = useState('')
+  const [railSort, setRailSort] = useState<RailSort>('newest')
   const [message, setMessage] = useState<string | null>(null)
   // Captured once, so the status bar can show growth without arithmetic (SS10).
   const baselineDisk = useRef<number | null>(null)
@@ -225,6 +234,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setStateFilter,
       starredOnly,
       setStarredOnly,
+      filterText,
+      setFilterText,
+      railSort,
+      setRailSort,
       toggleStar,
       setPriority,
       disk,
@@ -245,6 +258,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       queueDepth,
       stateFilter,
       starredOnly,
+      filterText,
+      railSort,
       toggleStar,
       setPriority,
       disk,

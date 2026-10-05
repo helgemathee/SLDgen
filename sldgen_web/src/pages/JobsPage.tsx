@@ -1,4 +1,5 @@
 import { JobThumb } from '../components/JobThumb'
+import { useVisibleJobs } from '../components/JobRail'
 import { JobStatus } from '../components/JobStatus'
 import { SelectionActions } from '../components/SelectionActions'
 import { StarToggle } from '../components/StarToggle'
@@ -10,12 +11,15 @@ import { useApp } from '../state/store'
 /**
  * The overview grid.
  *
- * The rail is the authoritative list; this is the same set at a size where the
+ * The rail is the authoritative list; this is the same set (same filters, same
+ * order) at a size where the
  * artwork is actually judgeable, which is what you want when four candidates
  * have just finished and the rail's 44px thumbnails are too small to choose by.
  */
 export function JobsPage() {
   const { jobs, selection, toggleSelected } = useApp()
+  const visible = useVisibleJobs()
+  // Positions over the whole queue, not just the filtered cells.
   const positions = queuePositions(jobs)
 
   if (jobs.length === 0) {
@@ -33,7 +37,9 @@ export function JobsPage() {
   return (
     <div className="compare">
       <div className="compare__toolbar">
-        <span className="eyebrow">{jobs.length} jobs</span>
+        <span className="eyebrow">
+          {visible.length === jobs.length ? `${jobs.length} jobs` : `${visible.length} of ${jobs.length} jobs`}
+        </span>
         <span className="note">
           Tick two or more to compare them, or any number to delete them. Shift-click a rail row
           does the same.
@@ -41,7 +47,8 @@ export function JobsPage() {
         <span style={{ flex: 1 }} />
         <SelectionActions compact />
       </div>
-      {jobs.map((job) => (
+      {visible.length === 0 && <div className="note">Nothing matches the rail's filter.</div>}
+      {visible.map((job) => (
         <div className="cell" key={job.id}>
           <div
             className="cell__art"

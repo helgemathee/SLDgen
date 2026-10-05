@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { JobRail, filterJobs } from './components/JobRail'
+import { useEffect, useState } from 'react'
+import { JobRail, useVisibleJobs } from './components/JobRail'
 import { StatusBar } from './components/StatusBar'
 import { HelpOverlay } from './components/HelpOverlay'
 import { ComparePage } from './pages/ComparePage'
@@ -11,17 +11,14 @@ import { useApp } from './state/store'
 
 export function App() {
   const route = useRoute()
-  const { jobs, stateFilter, starredOnly, message } = useApp()
+  const { message } = useApp()
   const [helpOpen, setHelpOpen] = useState(false)
   const [focusedId, setFocusedId] = useState<string | null>(null)
 
   const selectedId = route.name === 'job' ? route.id : null
 
   // The rail's own ordering, so j/k walk what is actually on screen.
-  const ordered = useMemo(
-    () => filterJobs(jobs, { states: stateFilter, starredOnly, text: '', sort: 'newest' }),
-    [jobs, stateFilter, starredOnly],
-  )
+  const ordered = useVisibleJobs()
 
   useEffect(() => {
     if (selectedId) setFocusedId(selectedId)
